@@ -28,6 +28,7 @@ from quatsim.aero import AeroModel, GridFinModel
 from quatsim.control import AttitudeController, ControlGains
 from quatsim.mission import (SeparationState, build_mission, mission_report,
                              propagate_flip, solve_boostback)
+from quatsim.landing import LandingConfig
 from quatsim.phases import FlightSequencer, catch_report, solve_ignition_altitude
 from quatsim.position import PositionController, PositionGains
 from quatsim.vehicle import Vehicle
@@ -66,7 +67,21 @@ def build():
     return vehicle, aero, sep, bb0, land, seq
 
 
-def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20):
+# Boostback aim point: where the ballistic arc should cross 1200 m altitude,
+# measured downrange of the tower. Deliberately OFFSHORE (+x): if the landing
+# burn never lit, the booster would come down short of the tower rather than
+# on it, and the landing burn performs the final divert in. The predictive
+# boostback now hits this point to within a few metres, so it is a design
+# choice rather than a calibration fudge.
+AIM_X_1200 = 250.0
+
+
+def landing_config() -> LandingConfig:
+    return LandingConfig(target=TARGET.copy())
+
+
+def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
+        aim_x=AIM_X_1200, landing=None):
     bb = dict(bb0)
     bb["duration"] = t33 + 6.0
     segs = build_mission(vehicle, aero, sep, bb, land, TARGET, np.zeros(3),
@@ -78,34 +93,17 @@ def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20):
         if s.name == "boostback_33":
             s.predictive_boostback = True
             s.boostback_target_altitude = 1200.0
-            s.boostback_target_x = -2293.624
-            s.boostback_reference_33 = T33_BURN
+            s.boostback_target_x = aim_x
+            s.boostback_target_y = float(TARGET[1])
             s.boostback_tail13 = 3.0
             s.boostback_tail3 = 3.0
             # Predictive mode owns the cutoff; this is only a safe maximum
-            # window, not a commanded burn duration.  It allows the controller
-            # to correct both an early and a late nominal T33 value.
-            s.duration = 12.0
+            # window, not a commanded burn duration.
+            s.duration = 14.0
         if s.name == "landing":
-            s.design_frac = 0.20
-            s.k_v = 2.0
-            s.v_touch = 0.2
-            s.k_lat = 0.9
-            s.lat_design_frac = 0.15
-            s.max_tilt = np.radians(30.)
-            s.v_lat_touch = 0.15
-            s.k_pos = 0.02
+            s.landing = landing if landing is not None else landing_config()
             s.r_target = TARGET
-            s.taper_altitude = 600.0
-            s.terminal_taper_altitude = 5.0
-            s.terminal_upright_height = 5.0
-            s.two_phase = True
-            s.solve_brake = True
-            s.brake_margin = 0.40
-            s.handover_altitude = 250.0
-            s.v_terminal_descent = 8.0
-            s.v_lat_handover = 0.5
-            s.catch_altitude = 105.0 - ALT_BIAS
+            s.catch_altitude = float(TARGET[2])
     return seq.run(sep.state_vector(), segs, dt=dt, log_every=log_every)
 
 

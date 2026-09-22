@@ -44,11 +44,11 @@ import numpy as np
 from . import dynamics6dof as D6
 from . import quaternion as Q
 from . import environment as ENV
-from . import quaternion as Q
 from . import aero as AERO
 from .aero import AeroModel
 from .control import AttitudeController
 from .guidance import attitude_from_pointing
+from .landing import LandingConfig, LandingGuidance
 from .position import PositionController, divert_profile
 from .vehicle import Vehicle
 
@@ -193,6 +193,15 @@ class Segment:
     boostback_reference_33: float = 9.1472
     boostback_tail13: float = 3.0
     boostback_tail3: float = 3.0
+    boostback_target_y: float = 0.0
+    # LANDING mode: guidance configuration (landing.LandingConfig). None
+    # builds a default one aimed at r_target.
+    landing: object | None = None
+    boostback_steer_crossrange: bool = True
+    # Re-solve the cutoff this often during the 33-engine burn, while more
+    # than `boostback_resolve_min_remaining` seconds of burn remain.
+    boostback_resolve_period: float = 2.5
+    boostback_resolve_min_remaining: float = 1.5
 
 
 @dataclass
@@ -382,6 +391,12 @@ class FlightSequencer:
         # the booster has, and the only three-axis actuator with real authority
         # once engines are out.
         self.fins = fins
+        # Guidance-side models. By default guidance knows the truth plant
+        # exactly; the Monte Carlo sets these to the NOMINAL models so that
+        # thrust, Isp, drag and wind dispersions are genuinely unknown to the
+        # predictor and the landing guidance, as they would be in flight.
+        self.gnc_vehicle = vehicle
+        self.gnc_aero = aero
         self._ignited = False
         self._burn_done = False
         self._segment_done = False
@@ -408,6 +423,11 @@ class FlightSequencer:
         self._boostback_pred = None
         self._boostback_pred_t = -1e9
         self._boostback_cutoff_tseg = None
+        self._boostback_history = []
+        self._landing = None
+        self._guid_log = []
+        self._bb_q_base = None
+        self._bb_yaw = 0.0
         self._landing_n_lit = 0
         self._a_brake = None
         self._ignited = False
@@ -471,38 +491,68 @@ class FlightSequencer:
                     self._terminal_dispersion_applied = True
                     r, v, q, w, prop = D6.unpack(s)
 
-                # Predictive boostback cutoff: solve the remaining 33-engine
-                # time against the actual future RK4 plant.  This is evaluated
-                # from the live state, not from the original T33 schedule.
-                # The prediction includes the fixed 13/3 tail and ballistic
-                # coast to the same targeting altitude used by solve_boostback.
+                # CLOSED-LOOP PREDICTIVE BOOSTBACK.
+                #
+                # Solve the remaining 33-engine time and the burn heading
+                # against a live RK4 prediction of burn + tail + coast, and
+                # RE-SOLVE it every `boostback_resolve_period` seconds while
+                # enough burn remains. The one-shot version froze whatever the
+                # prediction said at burn start, including the flip's
+                # residual rates; re-solving closes the loop on them.
                 if (seg.mode == Mode.ATTITUDE and seg.name == "boostback_33"
                         and getattr(seg, "predictive_boostback", False)
-                        and not self._boostback_cutoff
-                        and self._boostback_pred is None):
-                    from .mission import solve_predictive_remaining_33
-                    max_rem = max(seg.duration - t_seg, 0.0)
-                    pred = solve_predictive_remaining_33(
-                        self.vehicle, self.aero, s, q_ref_now, max_rem,
-                        throttle=seg.throttle,
-                        tail13=seg.boostback_tail13,
-                        tail3=seg.boostback_tail3,
-                        target_altitude=seg.boostback_target_altitude,
-                        target_x=seg.boostback_target_x,
-                        dt=0.10,
-                    )
-                    self._boostback_pred = pred
-                    self._boostback_pred_t = t_seg
-                    rem = pred["remaining_33"]
-                    self._boostback_cutoff_tseg = t_seg + rem
-                    # Do not quantize the cutoff to the flight timestep. If the
-                    # predictor asks for a fraction of this step, integrate
-                    # exactly that fraction and hand off to the 13-engine stage.
+                        and not self._boostback_cutoff):
+                    due = (self._boostback_pred is None or (
+                        t_seg - self._boostback_pred_t
+                        >= seg.boostback_resolve_period
+                        and self._boostback_cutoff_tseg - t_seg
+                        > seg.boostback_resolve_min_remaining))
+                    if due:
+                        from .mission import (solve_predictive_remaining_33,
+                                              yawed_attitude)
+                        if self._bb_q_base is None:
+                            self._bb_q_base = {
+                                sg.name: np.asarray(sg.q_ref, float).copy()
+                                for sg in segments
+                                if sg.name.startswith("boostback")
+                                and sg.q_ref is not None}
+                        guess = (None if self._boostback_cutoff_tseg is None
+                                 else self._boostback_cutoff_tseg - t_seg)
+                        tx = seg.boostback_target_x
+                        pred = solve_predictive_remaining_33(
+                            self.gnc_vehicle, self.gnc_aero, s,
+                            self._bb_q_base["boostback_33"],
+                            max(seg.duration - t_seg, 0.0),
+                            throttle=seg.throttle,
+                            tail13=seg.boostback_tail13,
+                            tail3=seg.boostback_tail3,
+                            target_altitude=seg.boostback_target_altitude,
+                            target_x=0.0 if tx is None else tx,
+                            target_y=seg.boostback_target_y,
+                            dt=0.10, guess=guess,
+                            yaw_guess=self._bb_yaw,
+                            steer_crossrange=seg.boostback_steer_crossrange,
+                        )
+                        self._boostback_pred = pred
+                        self._boostback_pred_t = t_seg
+                        self._boostback_history.append(
+                            (t, pred["remaining_33"], pred["yaw"],
+                             pred["predicted_x"], pred["predicted_y"]))
+                        self._boostback_cutoff_tseg = t_seg + pred["remaining_33"]
+                        self._bb_yaw = pred["yaw"]
+                        for sg in segments:
+                            if sg.name in self._bb_q_base:
+                                sg.q_ref = yawed_attitude(
+                                    self._bb_q_base[sg.name], self._bb_yaw)
+                        log.events.append((t, f"boostback re-target: "
+                                           f"{pred['remaining_33']:.4f} s left, "
+                                           f"yaw {np.degrees(self._bb_yaw):+.3f} deg"))
+                        (thrust, torque, mdot, throttle, gim,
+                         r_ref_now, q_ref_now) = self._actuate(
+                            seg, s, t_seg, r_seg_start)
 
-                # Apply the previously solved cutoff on every subsequent
-                # integration step. The prediction itself is one-shot; this
-                # avoids re-solving thousands of RK4 coast steps while still
-                # making the cutoff time continuous rather than dt-quantized.
+                # Apply the solved cutoff on every integration step, without
+                # quantizing it to the flight timestep.
                 if (seg.name == "boostback_33"
                         and getattr(seg, "predictive_boostback", False)
                         and self._boostback_cutoff_tseg is not None
@@ -522,12 +572,14 @@ class FlightSequencer:
                 # No fins_deployed flag: Super Heavy's grid fins are fixed
                 # structure and never fold, so fin drag is always present.
                 drag = self.aero.drag_force(v, float(r[2]))
+                v_air = self.aero.air_velocity(v, float(r[2]))
                 # Weathercocking. Applies in EVERY phase, not just the coast:
                 # it is a property of the airframe, not a control mode. This is
                 # what rotates the booster continuously from its boostback
                 # attitude to engines-first and then upright as it descends.
                 torque = torque + AERO.restoring_moment(
-                    s[D6.Q_SLICE], v, float(r[2]), omega=w
+                    s[D6.Q_SLICE], v_air, float(r[2]), omega=w,
+                    density_scale=self.aero.density_scale
                 )
                 forces = D6.Forces(thrust=thrust, torque=torque,
                                    mass_flow=mdot, drag=drag)
@@ -595,6 +647,13 @@ class FlightSequencer:
         out["lat_log"] = list(self._lat_log)
         out["ignition_alt"] = self._ignition_alt
         out["ignition_v"] = self._ignition_v
+        out["boostback_history"] = list(self._boostback_history)
+        out["guidance_log"] = list(self._guid_log)
+        lg = self._landing
+        out["landing_events"] = ({} if lg is None else {
+            "ignition_t": lg.ignition_t, "ignition_alt": lg.ignition_alt,
+            "ignition_speed": lg.ignition_speed,
+            "handover_t": lg.handover_t, "handover_alt": lg.handover_alt})
         return out
 
     # ------------------------------------------------------------------
@@ -613,681 +672,37 @@ class FlightSequencer:
             return 0.0, np.zeros(3), 0.0, 0.0, 0.0, r.copy(), q.copy()
 
         if seg.mode == Mode.LANDING:
-            # CLOSED-LOOP LANDING BURN, velocity-profile tracking.
-            #
-            # The energy-matching form, a_req = v^2 / (2*h_left), is the
-            # textbook suicide-burn condition and it is genuinely useful for
-            # deciding WHEN to ignite. It is a bad CONTROL law, because it
-            # diverges as h_left -> 0: near the target it demands infinite
-            # deceleration, the throttle saturates, and the last few tens of
-            # m/s never get removed. That is exactly how the previous version
-            # arrived at the catch altitude still doing 30 m/s.
-            #
-            # Real landers track a velocity REFERENCE instead:
-            #
-            #     v_ref(h) = -sqrt(2 * a_design * h_left + v_touch^2)
-            #
-            # The v_touch^2 term keeps the square root away from zero, so the
-            # reference approaches a small finite touchdown speed rather than
-            # exactly zero and the law stays bounded everywhere. a_design sits
-            # at a fraction of the deceleration actually available, which
-            # leaves the tracker authority in BOTH directions -- it can push
-            # harder if it falls behind and ease off if it gets ahead.
-            #
-            # Ignition is then simply "the vehicle has reached the reference
-            # profile", which is the same physics as the suicide-burn trigger
-            # but expressed in the variable the controller is regulating.
-            q_up = attitude_from_pointing([0.0, 0.0, 1.0])
-            h = float(r[2])
-            vz = float(v[2])
-            m_now = veh.mass(prop)
-            full = veh.axial_thrust(seg.n_lit, 1.0)
-            drag_mag = float(np.linalg.norm(self.aero.drag_force(v, h)))
-
-            h_left = max(h - seg.catch_altitude, 0.0)
-            a_avail = full / m_now - ENV.G0 + drag_mag / m_now
-            # BRAKING DECELERATION SOLVED FROM THE TERMINAL CONDITIONS.
-            #
-            # design_frac * a_avail is arbitrary: it ties the profile to a
-            # fraction of whatever thrust happens to be available, so the
-            # handover state is whatever falls out. Solving instead for the
-            # deceleration that hits (handover_altitude, v_terminal_descent)
-            # exactly makes the handover a REQUIREMENT and the throttle an
-            # OUTPUT:
-            #
-            #     a_brake = (v_entry^2 - v_hand^2) / (2 * (h_entry - h_hand))
-            #
-            # Computed once at ignition from the actual entry state, so it is
-            # right for the state the vehicle is in rather than for an assumed
-            # one. The resulting throttle curve starts high and decays -- which
-            # is what a real landing burn does -- but it is never commanded as
-            # a schedule.
-            if seg.solve_brake and self._a_brake is None:
-                h_span = max(self._ignition_alt - seg.handover_altitude, 1.0)
-                v_hand = seg.v_terminal_descent if seg.two_phase else seg.v_touch
-                self._a_brake = max(
-                    (self._ignition_v ** 2 - v_hand ** 2) / (2.0 * h_span), 0.1)
-            a_design = (self._a_brake if (seg.solve_brake and self._a_brake)
-                        else max(seg.design_frac * a_avail, 0.1))
-            # TWO-PHASE VERTICAL PROFILE.
-            #
-            # The two engine stages have different JOBS, so they get different
-            # references:
-            #
-            #   13 engines -- BRAKE HARD. Energy-matched profile,
-            #                 v_ref = sqrt(2*a_design*h), thrust well above
-            #                 hover, all authority spent on killing vertical
-            #                 velocity.
-            #
-            #    3 engines -- FLY IT IN. Constant gentle descent at
-            #                 v_terminal_descent, tapering to v_touch at the
-            #                 catch. Thrust sits near hover BY DESIGN, so
-            #                 a_vert ~ g and the lateral controller has
-            #                 g*tan(30 deg) = 5.7 m/s^2 to work with for the
-            #                 whole final approach.
-            #
-            # The single-profile version made lateral authority a RESIDUAL of
-            # whatever the vertical tracker left over -- which in the final
-            # seconds was nothing (a_vert bottomed at 1.0 m/s^2, below hover,
-            # thrust effectively cut). Horizontal velocity stuck at 3.64 m/s
-            # because there was no thrust left to tilt.
-            # two_phase=False restores the single energy-matched profile, which
-            # is the current BASELINE (6/7). The two-phase version is correct
-            # in principle -- see the backward solve in SOLUTION.md -- but the
-            # 13-engine tracker does not yet deliver the handover velocity it
-            # needs, so enabling it costs criteria rather than gaining them.
-            terminal_phase = (seg.two_phase and self._landing_n_lit
-                              and self._landing_n_lit <= seg.downselect[-1])
-            if terminal_phase:
-                # gentle constant descent, easing to v_touch near the target
-                ease = float(np.clip(h_left / seg.terminal_ease, 0.0, 1.0))
-                v_ref = -(seg.v_touch
-                          + ease * (seg.v_terminal_descent - seg.v_touch))
-            else:
-                # BRAKE TO THE HANDOVER STATE, not to the catch.
-                #
-                # Targeting the catch altitude makes the 13-engine phase brake
-                # all the way down, arriving with no altitude left -- the
-                # 3-engine phase then lasted 3.5 s instead of the ~18 s seen on
-                # Flight 7. Aiming at (handover_altitude, v_terminal_descent)
-                # instead leaves a real final-approach runway, which is where
-                # the lateral work actually gets done.
-                h_to_handover = (max(h - seg.handover_altitude, 0.0)
-                                 if seg.two_phase else h_left)
-                v_floor = (seg.v_terminal_descent if seg.two_phase
-                           else seg.v_touch)
-                v_ref = -np.sqrt(2.0 * a_design * h_to_handover + v_floor ** 2)
-
-            # Ignition, when solve_brake is on, is the capability test against
-            # the HANDOVER target -- not against a profile that needs a_brake,
-            # which does not exist until ignition. That was circular and the
-            # burn never lit.
-            if seg.solve_brake and not self._ignited:
-                v_hand = seg.v_terminal_descent if seg.two_phase else seg.v_touch
-                h_span = h - seg.handover_altitude
-                if h_span > 1.0:
-                    a_needed = (vz * vz - v_hand ** 2) / (2.0 * h_span)
-                    a_max = full / m_now - ENV.G0 + drag_mag / m_now
-                    if a_needed >= a_max * seg.brake_margin:
-                        self._ignited = True
-                        self._ignition_alt = h
-                        self._ignition_v = abs(vz)
-                        self._a_brake = max(a_needed, 0.1)
-            if not self._ignited and vz <= v_ref:
-                self._ignited = True
-                # Record the TRUE ignition state. The landing SEGMENT begins at
-                # the coast exit altitude, but the burn does not start until
-                # the velocity profile is reached -- those are different
-                # altitudes and conflating them makes the burn look longer than
-                # it is.
-                self._ignition_alt = h
-                self._ignition_v = abs(vz)
-
-            # In the two-phase architecture, crossing the handover velocity
-            # is NOT a landing completion condition. It is exactly the point
-            # where the 3-engine precision phase begins. The old single-phase
-            # exit test ended the entire landing segment as soon as vz became
-            # slower than v_touch, which could happen around 180 m -- leaving
-            # the terminal controller almost no time to run.
-            #
-            # Single-phase mode still uses the velocity condition because its
-            # velocity profile is the landing profile itself.
-            if h_left <= 0.0 or (
-                    not seg.two_phase and self._ignited and vz >= -seg.v_touch):
+            # Closed-loop landing burn -- see landing.py for the guidance law.
+            if self._landing is None:
+                cfg = seg.landing if seg.landing is not None else LandingConfig(
+                    target=(np.asarray(seg.r_target, float)
+                            if seg.r_target is not None
+                            else np.array([0.0, 0.0, seg.catch_altitude])))
+                self._landing = LandingGuidance(cfg, self.gnc_vehicle,
+                                                self.gnc_aero)
+            lg = self._landing
+            cmd = lg.step(r, v, q, prop, self._t_now)
+            self._ignited = cmd.phase != "coast"
+            self._ignition_alt = lg.ignition_alt
+            self._ignition_v = lg.ignition_speed
+            self._landing_n_lit = cmd.n_lit
+            if cmd.phase == "done":
                 self._segment_done = True
-
-            if (not self._ignited) or self._segment_done:
-                ao = self.attitude.update(q, w, q_up, np.zeros(3), prop, 0, 0.0)
-                return (0.0, ao.torque_applied, 0.0, 0.0, 0.0, r.copy(), q_up)
-
-            # VERTICAL ACCELERATION COMMAND.
-            #
-            # Two regimes, and the braking one is a true feedback law rather
-            # than a tracked profile.
-            #
-            # BRAKING (13 engines): recompute, every step, the deceleration
-            # still required to reach the handover state FROM WHERE THE VEHICLE
-            # ACTUALLY IS:
-            #
-            #     a = (vz^2 - v_hand^2) / (2 * (h - h_hand))
-            #
-            # Two earlier forms of this were wrong. Capping at
-            # design_frac * a_avail meant the controller could never command
-            # what the terminal condition required -- it arrived at the handover
-            # carrying ~40 m/s instead of 8 and the precision phase collapsed
-            # from 18 s to 6 s. Latching the deceleration at ignition left a
-            # standing 1.5-2 m/s error, because mass and drag change through
-            # the burn. Recomputing continuously has no steady error: the
-            # throttle curve that results (high at ignition, tapering toward
-            # the handover) is an OUTPUT, not a schedule.
-            #
-            # TERMINAL (3 engines): track the gentle descent reference, which
-            # holds thrust near hover and therefore preserves lateral
-            # authority for the whole final approach.
-            if seg.solve_brake and not terminal_phase:
-                v_hand = (seg.v_terminal_descent if seg.two_phase
-                          else seg.v_touch)
-                dh = max(h - seg.handover_altitude, 1.0)
-                a_cmd = (vz * vz - v_hand ** 2) / (2.0 * dh)
-            elif terminal_phase:
-                # Precision phase: the handover has already done the braking
-                # job. For a constant descent reference, hover is the
-                # feed-forward condition (a_cmd = 0); only velocity error asks
-                # for extra acceleration.
-                a_cmd = -seg.k_v * (vz - v_ref)
-            else:
-                # Single-phase baseline velocity-profile tracker.
-                a_cmd = a_design - seg.k_v * (vz - v_ref)
-
-            # THRUST FLOOR. Never command below hover during the burn.
-            #
-            # Without this the vertical tracker cuts thrust to nothing once the
-            # vehicle is descending slower than the reference -- a_cmd went to
-            # -8.8 m/s^2, i.e. below free fall. And since lateral authority is
-            # a_vert * tan(tilt), zero thrust means ZERO lateral authority
-            # exactly in the final seconds when the remaining horizontal
-            # velocity has to be killed. Measured a_vert bottomed at the 1.0
-            # clamp, when hover alone would have given 9.81 and a 30 deg lean
-            # would have given 5.7 m/s^2 of lateral correction.
-            #
-            # Flooring at hover costs a little propellant and buys lateral
-            # authority throughout the terminal phase.
-            # Partial floor. A FULL hover floor (a_cmd >= 0) keeps enough
-            # thrust for lateral authority -- horizontal velocity fell from
-            # 3.64 to 0.67 m/s -- but stops the vehicle descending on profile,
-            # so it arrived at 33 m/s. Flooring at a FRACTION of hover keeps
-            # some thrust, and therefore some lateral authority, without
-            # overriding the descent.
-            if seg.hover_floor > 0.0:
-                a_cmd = max(a_cmd, -(1.0 - seg.hover_floor) * ENV.G0)
-            thrust_need = m_now * (a_cmd + ENV.G0) - drag_mag
-
-            # ENGINE DOWNSELECT, 13 -> 3 -> 2.
-            #
-            # Driven by thrust demand, not a schedule. As the vehicle sheds
-            # propellant and slows, the thrust it needs falls below what 13
-            # engines can deliver even at their throttle floor -- so it drops
-            # to 3, then to 2 for the terminal hover. That is exactly why the
-            # real vehicle downselects, and picking the count from demand
-            # reproduces it without hard-coding timings.
-            #
-            # Rule: use the FEWEST engines that can still supply the required
-            # thrust at or below 100% throttle. Fewer engines means a higher
-            # throttle setting for the same thrust, which keeps the commanded
-            # throttle above the floor instead of pinning against it.
-            # ENGINE DOWNSELECT, gated on STOPPING CAPABILITY.
-            #
-            # Step down to the next engine count only when that count can still
-            # arrest the descent from here:
-            #
-            #     v^2 / (2 * h_left) + g  <=  n * F / m * margin
-            #
-            # which is just the suicide-burn condition evaluated for the
-            # candidate. Altitude-fraction gating was wrong: it stepped down on
-            # a schedule without checking the vehicle was slow enough, and the
-            # booster arrived at 54-82 m/s. Instantaneous thrust DEMAND was
-            # also wrong -- with a gentle profile the demand is low from
-            # ignition, so it dropped to 3 engines at 2.7 km, before the hard
-            # braking was done.
-            #
-            # Capability is the right test: it asks whether the remaining
-            # engines can finish the job, which is the actual reason hardware
-            # downselects. Latched one-way; a shutdown is irreversible.
-            n_lit = self._landing_n_lit or seg.n_lit
-            for candidate in seg.downselect:
-                if candidate >= n_lit:
-                    continue
-                # Capability AND runway: the step-down happens once the
-                # vehicle is at handover altitude and slow enough for the
-                # remaining engines to fly it in.
-                if seg.two_phase and h > seg.handover_altitude:
-                    continue
-                a_needed = (vz * vz) / (2.0 * max(h_left, 1.0)) + ENV.G0
-                a_cap = veh.axial_thrust(candidate, 1.0) / m_now
-                if a_needed <= a_cap * seg.downselect_margin:
-                    n_lit = candidate
-            self._landing_n_lit = n_lit
-            full = veh.axial_thrust(n_lit, 1.0)
-
-            throttle = float(np.clip(thrust_need / full, 0.0, 1.0))
-            floor = (seg.terminal_throttle_floor if terminal_phase
-                     else seg.throttle_floor)
-            if 0.0 < throttle < floor:
-                throttle = floor
-
-            # COMBINED VERTICAL + LATERAL GUIDANCE.
-            #
-            # Holding the vehicle exactly vertical solves the descent and
-            # nothing else: thrust points straight up, so whatever horizontal
-            # velocity the booster arrives with, it keeps. Measured, that was
-            # 82 m/s at the catch point -- every other criterion nearly
-            # passing while the vehicle sailed sideways through the tower.
-            #
-            # Real boosters lean a few degrees during the landing burn to kill
-            # that component. Nulling 82 m/s over a ~20 s burn needs about
-            # 4 m/s^2, which is a 4 degree tilt: comfortably inside the budget
-            # and far cheaper than a separate divert phase.
-            #
-            # The construction is the same thrust-vector one position.py uses
-            # -- required acceleration, normalized, pointed at -- applied
-            # INSIDE the burn rather than in a phase afterwards. Vertical and
-            # lateral are then solved together instead of in sequence.
-            # TAPER the lateral authority as the catch approaches. Near the
-            # target the commanded vertical acceleration falls toward zero
-            # (the velocity profile is flattening out), so even a small lateral
-            # command dominates the thrust vector and the vehicle arrives
-            # leaning at the tilt limit. Measured: 15 degrees at the catch,
-            # against a 0.5 degree requirement.
-            #
-            # Fading the lateral term over the last stretch lets it do its work
-            # while there is still altitude to work with, then hands the last
-            # few seconds entirely to attitude -- which is what the catch
-            # criteria actually grade.
-            # TERMINAL ATTITUDE SCHEDULE.
-            #
-            # Tilt is commanded as an explicit function of altitude rather than
-            # falling out of whatever the lateral controller asks for. Fading
-            # the lateral GAIN instead (the previous attempt) traded one
-            # failure for another: fade early and horizontal velocity survives,
-            # fade late and the lean has to unwind so fast that body rate
-            # spikes to 49 deg/s. Both are symptoms of tilt being an output
-            # when it needs to be an input.
-            #
-            # Here the envelope is set first -- how far the vehicle is ALLOWED
-            # to lean at this altitude -- and the lateral controller works
-            # inside it. The envelope closes linearly to zero at the catch, so
-            # the unwind is spread over the whole taper rather than crammed
-            # into the last second.
-            taper = float(np.clip(h_left / (
-                seg.terminal_taper_altitude if terminal_phase
-                else seg.taper_altitude), 0.0, 1.0))
-            # Full PD on lateral POSITION, not just damping on velocity.
-            #
-            # Velocity feedback alone nulls the rate and leaves the offset:
-            # any drift accumulated from small attitude tracking errors during
-            # the burn is permanent, because nothing in the law knows where the
-            # target is. Measured, that was 8.6 m of crossrange appearing
-            # entirely within the landing segment of an otherwise perfectly
-            # planar trajectory -- with vy near zero the whole time, which is
-            # exactly what a pure damping law looks like when it has already
-            # done its job and still ends up in the wrong place.
-            tgt = np.zeros(2) if seg.r_target is None \
-                else np.asarray(seg.r_target, dtype=float)[:2]
-            pos_err = np.array([float(r[0]), float(r[1])]) - tgt
-            # RETARGET ONTO THE TOWER-COMPENSATED POINT.
-            #
-            # The arms track the booster, so error inside their envelope does
-            # not need correcting by the vehicle. Feeding the raw error makes
-            # the controller burn lateral authority erasing a 3 m offset the
-            # tower would simply have moved to meet -- authority that is then
-            # unavailable for killing horizontal velocity, which is the one
-            # thing the tower CANNOT do.
-            #
-            # Deadbanding the error by the envelope reverses that priority:
-            # position inside the envelope is free, velocity is not.
-            if seg.tower is not None:
-                pos_err = seg.tower.deadband(pos_err)
-            vel_lat = np.array([float(v[0]), float(v[1])])
-
-            # LATERAL BRAKING PROFILE -- same structure as the vertical axis.
-            #
-            # Proportional feedback asks "how hard should I push given my
-            # current error?" and is therefore still converging whenever it
-            # runs out of altitude. Measured, the vehicle arrived with lateral
-            # error 3.18 m and lateral speed 3.19 m/s -- not leftover velocity
-            # the controller failed to kill, but a controller still flying
-            # toward the target when the vertical profile terminated.
-            #
-            # A braking profile asks the other question: "what lateral velocity
-            # am I ALLOWED at this distance?" Far out, a lot. Close in, almost
-            # none. The vehicle therefore sheds lateral velocity BEFORE it
-            # reaches the taper, instead of discovering at 600 m that it still
-            # has 3 m/s to remove with a closing tilt budget.
-            #
-            #     v_ref = sqrt(2 * a_design * distance + v_touch^2)
-            #
-            # exactly as the vertical axis does.
-            a_vert = max(a_cmd + ENV.G0, 1.0)
-
-            # Design authority comes from the PRE-TAPER tilt limit, NOT the
-            # tapered one. The taper exists to shape the final attitude; if it
-            # also shrinks the braking authority, the profile retroactively
-            # decides the vehicle was never allowed to brake hard, which is
-            # the opposite of the intent.
-            #
-            # Note a_lat = a_vert * tan(tilt), not g * tan(tilt): under thrust
-            # a_vert is several g, so the available lateral acceleration is
-            # several times what a 1-g estimate suggests.
-            # DIAGNOSED 2026-09: lateral authority is a_vert * tan(tilt), and
-            # a_vert COLLAPSES from ~54 m/s^2 at ignition to ~1.0 m/s^2 once
-            # the vertical profile flattens toward v_touch. At a_vert = 1.0
-            # even a full 30 deg lean yields 0.58 m/s^2 of lateral correction.
-            #
-            # Measured across the landing burn, failing vs passing case:
-            #   a_vert   54.5 -> 9.9 -> 6.9 -> 4.4 -> 1.8 -> 1.0
-            #   a_lat   -13.9 -> 16.5 -> 1.2 -> 0.6 -> 2.1 -> 0.9   (failing)
-            #   a_lat    30.4 -> 30.3 -> 12.5 -> -7.4 -> 5.7 -> -1.0 (passing)
-            #
-            # v_ref_mag tracks d_lat correctly in BOTH cases (93 -> 8 m/s and
-            # 44 -> 0.9 m/s), so the braking profile is not at fault. The
-            # passing case simply arrives close enough that the brief
-            # high-thrust window suffices.
-            #
-            # CONSEQUENCE: all lateral correction must happen in the first few
-            # seconds of the burn. After that the vehicle is effectively
-            # ballistic horizontally. A more uniform vertical deceleration --
-            # holding a_vert near 30 m/s^2 instead of front-loading it -- would
-            # give ~18 m/s^2 of lateral authority throughout rather than for
-            # three seconds. design_frac currently produces the wrong shape:
-            # brake hard, then descend gently with no authority left.
-            a_lat_design = max(seg.lat_design_frac * a_vert
-                               * np.tan(seg.max_tilt), 0.05)
-
-            d_lat = float(np.linalg.norm(pos_err))
-
-            # ROLL-FIRST HANDOFF. The coast can arrive with the vehicle's
-            # body-z (the third grid fin) on either side of the desired catch
-            # radial because the aerodynamic model does not control roll.
-            # That ambiguity is harmless while the thrust vector is vertical,
-            # but it is NOT harmless once we ask for lateral acceleration: a
-            # yaw/pitch command expressed in a body frame rolled 180 deg can
-            # project the requested lateral acceleration into the opposite
-            # inertial direction. The old terminal law therefore created tens
-            # of metres of crossrange from an exactly planar initial state.
-            #
-            # Let the roll controller establish the catch roll first. During
-            # that short alignment window the thrust stays in the x-z plane;
-            # lateral guidance then starts from a known body/inertial mapping.
-            # TERMINAL LATERAL GUIDANCE (3-engine phase).
-            #
-            # The braking-profile law below asks "how fast may I approach?"
-            # and nulls POSITION. It leaves the vehicle arriving with velocity
-            # and, worse, still leaning -- 16.55 deg of tilt at the catch,
-            # because nothing in it plans the deceleration and unwind.
-            #
-            # This is the standard optimal terminal law, which drives position
-            # AND velocity to zero together at a known time-to-go:
-            #
-            #     a = -6 * r_err / t_go^2  -  4 * v / t_go
-            #
-            # The deceleration planning is built in: the command shrinks as
-            # t_go grows, and the velocity term actively unwinds the lean once
-            # the vehicle is moving the right way. It is the lateral analogue
-            # of the vertical energy matching in phase 1 -- the vehicle is
-            # always applying exactly what is needed to arrive stopped, from
-            # wherever it actually is.
-            if terminal_phase and seg.terminal_guidance:
-                # FORWARD-PREDICTED TERMINAL TRAJECTORY.
-                #
-                # Plan directly to the real catch plane (z = TARGET[2]) and
-                # a small allowed lateral velocity at a 5 m upright window.
-                # Assuming the current lateral acceleration is held over the
-                # predicted time-to-window gives a boundary-value command:
-                #
-                #   x_f = x + vx*t + 0.5*a*t^2
-                #   v_f = vx + a*t
-                #
-                # Eliminating a gives t = 2*(-x)/(vx + v_f).  In practice we
-                # use the vertical time-to-window and solve the required
-                # acceleration from the position boundary, while limiting it
-                # to the physically available 3-engine lateral authority.
-                # This naturally produces the desired swing-through: vx can
-                # cross zero before the catch, then become slightly positive,
-                # and the acceleration is reduced as the vehicle approaches
-                # the upright window.
-                # EXPLICIT TERMINAL-ATTITUDE CONSTRAINT.
-                #
-                # Lateral state is still solved by the forward terminal
-                # boundary-value law below, but its requested thrust-vector
-                # angle is now constrained by the *actual* attitude state and
-                # the time left to the catch plane.  The controller therefore
-                # solves two coupled requirements: lateral x/v must converge,
-                # while the commanded tilt must leave enough time for the
-                # attitude loop to settle to vertical.
-                upright_height = float(seg.terminal_upright_height)
-                v_terminal = float(seg.v_lat_terminal)
-                actual_tilt = float(D6.tilt_from_vertical(s))
-                omega = float(np.linalg.norm(np.asarray(s[10:13], dtype=float)))
-                wn_att = max(float(self.attitude.gains.wn), 0.05)
-                att_settle_time = 4.0 / wn_att
-                tilt_frac = np.clip(actual_tilt / np.radians(5.0), 0.0, 1.0)
-                rate_frac = np.clip(omega / np.radians(2.0), 0.0, 1.0)
-                att_frac = np.clip(0.70 * tilt_frac + 0.30 * rate_frac, 0.0, 1.0)
-                t_att = att_settle_time * max(att_frac, 0.15)
-                h_att = abs(float(vz)) * t_att
-                h_unwind = max(upright_height, h_att)
-                h_plan = max(h_left - upright_height, 0.0)
-
-
-                # Estimate time remaining to the 5 m-above-catch window from
-                # the actual vertical state.  Keep this deliberately tied to
-                # catch-plane altitude rather than absolute z.
-                vz_mag = max(abs(float(vz)), 1.0)
-                v_window = max(float(seg.v_touch), 0.15)
-                t_go = max(h_plan / vz_mag, 0.35)
-                if h_plan > 1.0 and vz < 0.0:
-                    # Blend toward the expected slower terminal descent rather
-                    # than pretending the current speed stays constant.
-                    t_go = max(h_plan / max(0.5 * (vz_mag + v_window), 1.0),
-                               0.35)
-
-                a_max = max(a_vert * np.tan(seg.max_tilt), 0.05)
-                a_cruise = max(a_vert * np.tan(np.radians(8.0)), 0.05)
-                a_lat = np.zeros(2)
-
-                for j in range(2):
-                    e = float(pos_err[j])
-                    vv = float(vel_lat[j])
-                    if h_plan <= 0.0 or abs(e) < 1e-3:
-                        a_lat[j] = -seg.k_lat * vv
-                        continue
-
-                    # Pick the terminal velocity toward the target.  If we are
-                    # already moving toward the target, allow the small
-                    # terminal speed; if moving away, the same boundary-value
-                    # solve will first brake through vx=0.
-                    toward = -np.sign(e)
-                    vf = toward * v_terminal
-
-                    # Forward-predict the lateral state to the upright window.
-                    # Required constant acceleration to land at x=0 with vf.
-                    # Use the actual remaining distance to the catch point.
-                    t = max(t_go, 0.35)
-                    a_req = (-e - vv * t) * 2.0 / (t * t)
-
-                    # Don't ask the engines for a lateral acceleration larger
-                    # than their current 3-engine tilt authority.  The small
-                    # cruise limit prevents a large early lean from turning
-                    # this into another aggressive position controller.
-                    a_cap = min(a_max, max(a_cruise, 0.25 * a_max))
-                    a_cmd = float(np.clip(a_req, -a_cap, a_cap))
-
-                    # Convert the remaining attitude-settle budget into a
-                    # maximum allowable commanded tilt.  With a second-order
-                    # attitude loop, a requested tilt decays approximately as
-                    # exp(-wn*t); reserve the terminal tolerance at the catch.
-                    # This is a feasibility constraint, not a lateral gain.
-                    t_catch = max(h_left / vz_mag, 0.35)
-                    theta_tol = np.radians(0.5)
-                    theta_allow = theta_tol * np.exp(
-                        np.clip(wn_att * max(t_catch - 0.15, 0.0), 0.0, 8.0))
-                    theta_allow = float(np.clip(theta_allow,
-                                                np.radians(0.5),
-                                                seg.max_tilt))
-                    a_att_cap = max(a_vert * np.tan(theta_allow), 0.05)
-                    a_cmd = float(np.clip(a_cmd, -a_att_cap, a_att_cap))
-
-                    # Keep lateral guidance active until very near the catch.
-                    # Begin the unwind 5 m above the 5 m upright window, then
-                    # smoothly reduce the lateral command to zero at the
-                    # upright point.  This preserves the curved terminal
-                    # trajectory instead of creating a long straight-down
-                    # segment, while still reserving the last 5 m for attitude
-                    # settling.
-                    final_window = max(upright_height + 5.0, 1.0)
-                    blend = float(np.clip(
-                        (h_left - upright_height) / final_window, 0.0, 1.0))
-                    blend = blend * blend * (3.0 - 2.0 * blend)
-                    a_lat[j] = a_cmd * blend
-
-                v_ref_mag = float(np.linalg.norm(vel_lat))
-                toward = np.zeros(2)
-
-            elif d_lat > 1e-6:
-                # PHASE-1 LATERAL STOPPING LAW. Solve the deceleration from
-                # the CURRENT state to the handover target instead of letting
-                # a design fraction decide how much speed survives:
-                #
-                #     a_stop = (v^2 - v_h^2) / (2*d)
-                #
-                # The sign is set by the actual velocity, so this is a braking
-                # law rather than a position-following law. If the vehicle is
-                # moving away from the target, the same expression naturally
-                # points back toward it. Once the speed is below the handover
-                # value, fall back to a bounded position/velocity correction.
-                vh = float(seg.v_lat_handover)
-                a_lat = np.zeros(2)
-                v_ref_vec = np.zeros(2)
-                for j in range(2):
-                    e = float(pos_err[j])
-                    vv = float(vel_lat[j])
-                    d = abs(e)
-                    if d < 1e-6:
-                        # At the target, only remove residual velocity.
-                        a_lat[j] = -seg.k_lat * vv
-                        continue
-
-                    # Desired velocity points toward zero position.
-                    v_toward = -np.sign(e)
-                    v_target_mag = np.sqrt(2.0 * max(a_lat_design, 0.05)
-                                            * d + vh * vh)
-                    v_ref_vec[j] = v_toward * v_target_mag
-
-                    # If moving toward the target faster than the handover
-                    # allowance, solve the actual stopping deceleration.
-                    moving_toward = (vv * v_toward) > 0.0
-                    if moving_toward and abs(vv) > vh:
-                        a_stop = (vv * vv - vh * vh) / (2.0 * d)
-                        a_lat[j] = -np.sign(vv) * a_stop
-                    else:
-                        # Otherwise build the allowed approach velocity.
-                        a_lat[j] = seg.k_lat * (v_ref_vec[j] - vv)
-
-                v_ref_mag = float(np.linalg.norm(v_ref_vec))
-                toward = np.zeros(2)
-            else:
-                a_lat = -seg.k_lat * vel_lat
-                v_ref_mag = 0.0
-                toward = np.zeros(2)
-            if terminal_phase and seg.terminal_guidance:
-                v_ref_mag = 0.0
-                toward = np.zeros(2)
-
-            # TEMP TEST: in the nominal planar case y is an invariant axis.
-            # Suppress commanded crossrange so we can distinguish guidance
-            # injection from attitude-frame injection.
-            if seg.two_phase and seg.r_target is not None and abs(float(seg.r_target[1])) < 1e-12:
-                a_lat[1] = -seg.k_lat * vel_lat[1]
-
-            # Diagnostic trace of the lateral loop. Off unless the caller sets
-            # `debug_lateral = True` on the sequencer, so it costs nothing in
-            # normal runs.
-            if getattr(self, "debug_lateral", False):
-                self._lat_log.append({
-                    "t": float(self._t_now), "alt": h,
-                    "pos_err_x": float(pos_err[0]), "pos_err_y": float(pos_err[1]),
-                    "d_lat": d_lat, "v_ref_mag": float(v_ref_mag),
-                    "toward_x": float(toward[0]), "toward_y": float(toward[1]),
-                    "vel_x": float(vel_lat[0]), "vel_y": float(vel_lat[1]),
-                    "a_lat_x": float(a_lat[0]), "a_lat_y": float(a_lat[1]),
-                    "a_vert": float(a_vert), "taper": float(taper),
-                })
-            a_vert = max(a_cmd + ENV.G0, 1.0)
-            direction = np.array([a_lat[0], a_lat[1], a_vert])
-            direction /= np.linalg.norm(direction)
-
-            # Clamp the lean. Past this the vertical component of thrust drops
-            # enough to spoil the descent profile the same law is tracking.
-            tilt = float(np.arccos(np.clip(direction[2], -1.0, 1.0)))
-            tilt_limit = max(seg.max_tilt * taper, np.radians(20))
-            if tilt > tilt_limit:
-                up = np.array([0.0, 0.0, 1.0])
-                axis = np.cross(up, direction)
-                n_ax = float(np.linalg.norm(axis))
-                if n_ax > 1e-9:
-                    axis /= n_ax
-                    c, sn = np.cos(tilt_limit), np.sin(tilt_limit)
-                    direction = (up * c + np.cross(axis, up) * sn
-                                 + axis * float(axis @ up) * (1 - c))
-                    direction /= np.linalg.norm(direction)
-                tilt = tilt_limit
-
-            # ROLL ALIGNMENT FOR THE CATCH.
-            #
-            # Do NOT force the catch roll while the vehicle is still making a
-            # large lateral correction. The coast may hand over with body-z
-            # on either side of the desired catch radial. Changing that roll
-            # at the same time as pitch/yaw guidance couples the body frame to
-            # the lateral thrust command and was the source of the large
-            # crossrange excursion seen from an exactly planar initial state.
-            #
-            # Preserve the current roll while horizontal speed is significant:
-            # project the actual body-z onto the plane normal to the requested
-            # thrust direction and use that as the roll reference. Once the
-            # lateral velocity has been killed, transition the roll reference
-            # to the catch radial. This makes roll a terminal requirement
-            # without spending the lateral-control window fighting the frame.
-            outward = np.array([1.0, 0.0, 0.0])
-            z_actual = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
-            z_keep = z_actual - float(z_actual @ direction) * direction
-            nz = float(np.linalg.norm(z_keep))
-            if nz < 1e-9:
-                z_keep = outward.copy()
-                nz = float(np.linalg.norm(z_keep))
-            z_keep /= nz
-
-            # Roll transition belongs to the terminal ALTITUDE window, not to
-            # horizontal speed. Using speed as the trigger made roll alignment
-            # wait for the very velocity that lateral guidance was trying to
-            # remove, so the catch-roll requirement could become self-defeating.
-            # Preserve the incoming roll through the 13-engine brake, then
-            # smoothly rotate the reference to the catch radial across the
-            # 3-engine 180 -> catch altitude interval.
-            if terminal_phase:
-                h_span = max(seg.handover_altitude - seg.catch_altitude, 1.0)
-                u0 = float(np.clip(
-                    (seg.handover_altitude - h) / h_span, 0.0, 1.0))
-                roll_u = u0 * u0 * (3.0 - 2.0 * u0)
-            else:
-                roll_u = 0.0
-            roll_ref = (1.0 - roll_u) * z_keep + roll_u * outward
-            nr = float(np.linalg.norm(roll_ref))
-            if nr < 1e-9:
-                roll_ref = outward
-            else:
-                roll_ref /= nr
-            q_cmd = attitude_from_pointing(direction, roll_reference=roll_ref)
-            thrust = veh.axial_thrust(n_lit, throttle)
+            q_cmd = attitude_from_pointing(cmd.direction,
+                                           roll_reference=cmd.roll_ref)
+            if cmd.phase in ("coast", "done"):
+                ao = self.attitude.update(q, w, q_cmd, np.zeros(3), prop,
+                                          0, 0.0)
+                return (0.0, ao.torque_applied, 0.0, 0.0, 0.0, r.copy(),
+                        q_cmd)
+            if cmd.phase == "brake" or cmd.phase == "terminal":
+                self._guid_log.append(dict(cmd.info, t=self._t_now,
+                                           phase=cmd.phase,
+                                           throttle=cmd.throttle,
+                                           n_lit=cmd.n_lit))
+            n_lit = cmd.n_lit
+            throttle = cmd.throttle
+            thrust = veh.axial_thrust(n_lit, throttle)       # TRUTH engines
             n_gim = min(seg.n_gimballing, n_lit)
             ao = self.attitude.update(q, w, q_cmd, np.zeros(3), prop,
                                       n_gim, throttle)

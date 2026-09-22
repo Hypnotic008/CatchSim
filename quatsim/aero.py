@@ -85,6 +85,18 @@ class AeroModel:
     # penalty implies -- three 50%-larger grid fins at high angle of attack,
     # plus body drag effects this axial-only model does not capture.
     fin_drag_factor: float = 2.00
+    # Dispersion hooks. Nominal values reproduce the original model exactly.
+    cd_scale: float = 1.0          # multiplies the whole drag coefficient
+    density_scale: float = 1.0     # multiplies atmospheric density
+    # Wind: callable altitude -> inertial wind vector (m/s), or None. Drag
+    # acts on the AIR-relative velocity.
+    wind: object | None = None
+
+    def air_velocity(self, velocity: np.ndarray, altitude: float) -> np.ndarray:
+        v = np.asarray(velocity, dtype=float)
+        if self.wind is None:
+            return v
+        return v - np.asarray(self.wind(float(altitude)), dtype=float)
 
     @property
     def reference_area(self) -> float:
@@ -100,17 +112,18 @@ class AeroModel:
         high angle of attack -- another limitation of treating drag as purely
         axial.
         """
-        v = np.asarray(velocity, dtype=float)
+        v = self.air_velocity(velocity, altitude)
         speed = float(np.linalg.norm(v))
         if speed < 1e-6:
             return np.zeros(3)
 
         mach = ENV.mach(v, altitude)
-        cd = drag_coefficient(mach)
+        cd = drag_coefficient(mach) * self.cd_scale
         if fins_deployed:
             cd *= self.fin_drag_factor
 
-        q_dyn = 0.5 * ENV.density(altitude) * speed * speed
+        q_dyn = (0.5 * ENV.density(altitude) * self.density_scale
+                 * speed * speed)
         return -(q_dyn * cd * self.reference_area) * (v / speed)
 
     def terminal_velocity(self, mass: float, altitude: float = 0.0) -> float:
@@ -207,7 +220,8 @@ def restoring_moment(q: np.ndarray, velocity: np.ndarray, altitude: float,
                      omega: np.ndarray | None = None,
                      cm_alpha: float = 0.35, cm_q: float = 12.0,
                      ref_area: float = 63.6,
-                     ref_length: float = 72.3) -> np.ndarray:
+                     ref_length: float = 72.3,
+                     density_scale: float = 1.0) -> np.ndarray:
     """
     Aerodynamic weathercocking moment, body frame, N m.
 
@@ -236,7 +250,7 @@ def restoring_moment(q: np.ndarray, velocity: np.ndarray, altitude: float,
     if speed < 1.0:
         return np.zeros(3)
 
-    q_dyn = 0.5 * ENV.density(altitude) * speed * speed
+    q_dyn = 0.5 * ENV.density(altitude) * density_scale * speed * speed
     if q_dyn < 1e-6:
         return np.zeros(3)
 

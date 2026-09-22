@@ -310,15 +310,21 @@ def predict_boostback_arrival_rk4(
     t = 0.0
     total = max(float(remaining_33), 0.0) + float(tail13) + float(tail3)
 
+    # Stage boundaries. Steps are cut to land EXACTLY on them: evaluating
+    # the engine count only at fixed step starts rounds the 33-engine time to
+    # the prediction step, and at ~30 km of range per second of burn a 0.1 s
+    # quantum made the predicted arrival jump by 4 km -- the root finder then
+    # chattered between two branches and never converged.
+    b33 = max(float(remaining_33), 0.0)
+    b13 = b33 + float(tail13)
     while t < total - 1e-12:
-        h = min(dt, total - t)
-        elapsed33 = t
-        if elapsed33 < remaining_33:
-            n_now = 33
-        elif elapsed33 < remaining_33 + tail13:
-            n_now = 13
+        if t < b33 - 1e-12:
+            n_now, nxt = 33, b33
+        elif t < b13 - 1e-12:
+            n_now, nxt = 13, b13
         else:
-            n_now = 3
+            n_now, nxt = 3, total
+        h = min(dt, nxt - t)
 
         r, v, q, w, prop = D6.unpack(s)
         if prop > 0.0:
@@ -330,7 +336,7 @@ def predict_boostback_arrival_rk4(
 
         # Match FlightSequencer._actuate(): controller and environmental drag
         # are evaluated once at the beginning of the RK4 step.
-        q_control_ref = q_ref if n_now == 33 else q
+        q_control_ref = q_ref
         ao = ctrl.update(q, w, q_control_ref, np.zeros(3), prop,
                          min(13, n_now), throttle)
         drag = aero.drag_force(v, float(r[2]))
@@ -351,9 +357,18 @@ def predict_boostback_arrival_rk4(
     # irrelevant to translation because thrust is zero and drag is aligned
     # with velocity in this model, so a translational RK4 continuation is
     # sufficient and much cheaper than predicting the visual attitude slew.
+    s_prev = s.copy()
     while t < 900.0:
         if s[D6.R_SLICE][2] <= target_altitude and s[D6.V_SLICE][2] < 0.0:
+            # Interpolate the crossing so the reported arrival point is a
+            # continuous function of the burn, not of the step grid.
+            z0, z1 = s_prev[D6.R_SLICE][2], s[D6.R_SLICE][2]
+            f = (z0 - target_altitude) / (z0 - z1) if z0 != z1 else 1.0
+            f = float(np.clip(f, 0.0, 1.0))
+            s = s_prev + f * (s - s_prev)
+            t = t - (1.0 - f) * h
             break
+        s_prev = s.copy()
         h = min(dt, 900.0 - t)
         r, v, q, w, prop = D6.unpack(s)
         drag = aero.drag_force(v, float(r[2]))
@@ -372,6 +387,18 @@ def predict_boostback_arrival_rk4(
 
     return s[D6.R_SLICE].copy(), s[D6.V_SLICE].copy(), t
 
+def yawed_attitude(q_ref: np.ndarray, yaw: float) -> np.ndarray:
+    """Rotate an attitude about INERTIAL +z (local vertical) by ``yaw`` rad.
+
+    Used to steer the boostback burn axis out of the separation plane by a
+    small angle to null the predicted crossrange miss. Rotating about the
+    local vertical changes only the heading of the burn, not its elevation,
+    so the downrange solve and the crossrange solve stay nearly decoupled.
+    """
+    return Q.normalize(Q.multiply(Q.from_axis_angle([0.0, 0.0, 1.0], yaw),
+                                  np.asarray(q_ref, dtype=float)))
+
+
 def solve_predictive_remaining_33(
     vehicle: Vehicle,
     aero: AeroModel,
@@ -383,50 +410,112 @@ def solve_predictive_remaining_33(
     tail3: float = 3.0,
     target_altitude: float = 1_200.0,
     target_x: float = 0.0,
+    target_y: float = 0.0,
     dt: float = 0.1,
+    guess: float | None = None,
+    yaw_guess: float = 0.0,
+    steer_crossrange: bool = True,
+    tol_x: float = 2.0,
 ) -> dict:
-    """Find how much 33-engine burn remains using a live RK4 prediction.
+    """Closed-loop boostback targeting: cutoff time AND burn heading.
 
-    The root is the predicted downrange crossing of ``target_altitude``.
-    A small residual is preferred to a guessed stopping-distance equation.
-    The burn direction comes from the actual reference attitude, so the
-    predictor stays in-plane and cannot create a roll command.
+    Two unknowns, two conditions, solved against a live RK4 prediction of the
+    remaining burn, the 13/3-engine tail and the ballistic coast:
+
+        remaining 33-engine time  ->  predicted downrange x at target altitude
+        yaw of the burn axis      ->  predicted crossrange y at target altitude
+
+    WHY THIS REPLACED THE 7-STEP BISECTION
+    --------------------------------------
+    Downrange sensitivity is ~30 km per second of 33-engine burn. Seven
+    bisection steps over a 12 s window resolve the cutoff to 0.094 s, i.e.
+    ~3 km of arrival error. The nominal case happened to land inside that
+    quantum; a 2 km separation-downrange dispersion arrived 2 km off and the
+    catch failed. Here the cutoff is found by a bracketed secant (Illinois
+    false-position) iteration to ``tol_x`` metres, typically in 4-6 shots.
+
+    The crossrange channel uses one finite-difference shot for dy/dyaw and a
+    Newton step. The x/y coupling is weak (yaw of a fraction of a degree), so
+    one pass each is sufficient; the sequencer calls this repeatedly during
+    the burn, which closes the loop on any prediction error.
     """
-    def miss(rem):
+    q_ref = np.asarray(q_ref, dtype=float)
+
+    def shoot(rem, yaw):
         r, v, _ = predict_boostback_arrival_rk4(
-            vehicle, aero, state, q_ref, rem,
+            vehicle, aero, state, yawed_attitude(q_ref, yaw), rem,
             tail13=tail13, tail3=tail3, throttle=throttle,
             target_altitude=target_altitude, dt=dt)
-        return float(r[0] - target_x), r, v
+        return r, v
 
-    f0, r0, v0 = miss(0.0)
-    f1, r1, v1 = miss(max_remaining)
+    n_shots = 0
 
-    # More boostback should reduce +x range.  If the current state is already
-    # on the short side, don't invent negative burn time.
-    if f0 <= 0.0:
-        rem = 0.0
-        f, r, v = f0, r0, v0
-    elif f1 >= 0.0:
-        rem = max_remaining
-        f, r, v = f1, r1, v1
-    else:
-        lo, hi = 0.0, max_remaining
-        for _ in range(7):
-            mid = 0.5 * (lo + hi)
-            fm, rm, vm = miss(mid)
-            if fm > 0.0:
-                lo = mid
+    def solve_x(yaw, g):
+        nonlocal n_shots
+        cache = {}
+
+        def f(rem):
+            nonlocal n_shots
+            if rem not in cache:
+                n_shots += 1
+                r, v = shoot(rem, yaw)
+                cache[rem] = (float(r[0] - target_x), r, v)
+            return cache[rem]
+
+        # Build a bracket around the guess. More burn -> smaller x.
+        g = float(np.clip(g, 0.0, max_remaining))
+        h = 0.08
+        a, b = max(g - h, 0.0), min(g + h, max_remaining)
+        fa, fb = f(a)[0], f(b)[0]
+        while fa < 0.0 and a > 0.0:
+            a = max(a - 4.0 * h, 0.0); fa = f(a)[0]
+        while fb > 0.0 and b < max_remaining:
+            b = min(b + 4.0 * h, max_remaining); fb = f(b)[0]
+        if fa <= 0.0:
+            return a, f(a)
+        if fb >= 0.0:
+            return b, f(b)
+        side = 0
+        c, fc = a, fa
+        for _ in range(30):
+            c = (a * fb - b * fa) / (fb - fa)
+            fc = f(c)[0]
+            if abs(fc) < tol_x or (b - a) < 1e-6:
+                break
+            if fc > 0.0:
+                a, fa = c, fc
+                if side == 1:
+                    fb *= 0.5
+                side = 1
             else:
-                hi = mid
-        rem = 0.5 * (lo + hi)
-        f, r, v = miss(rem)
+                b, fb = c, fc
+                if side == -1:
+                    fa *= 0.5
+                side = -1
+        return c, f(c)
+
+    g0 = (0.5 * max_remaining) if guess is None else guess
+    yaw = float(yaw_guess)
+    rem, (fx, r, v) = solve_x(yaw, g0)
+
+    if steer_crossrange:
+        dyaw = np.radians(0.05)
+        r2, _ = shoot(rem, yaw + dyaw)
+        n_shots += 1
+        dy = (r2[1] - r[1]) / dyaw
+        if abs(dy) > 1.0:
+            yaw = float(np.clip(yaw - (r[1] - target_y) / dy,
+                                -np.radians(5.0), np.radians(5.0)))
+            rem, (fx, r, v) = solve_x(yaw, rem)
 
     return {
         "remaining_33": float(rem),
-        "predicted_x": float(f),
+        "yaw": float(yaw),
+        "predicted_x": float(fx),
+        "predicted_y": float(r[1] - target_y),
         "predicted_position": r,
         "predicted_velocity": v,
+        "shots": n_shots,
     }
 
 
