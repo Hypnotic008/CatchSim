@@ -620,11 +620,10 @@ def build_mission(
     coast_duration = max(boostback["coast_duration"] - reorient_duration, 1.0)
     coast_seg = Segment("coast", Mode.COAST, n_lit=0, n_gimballing=0,
                         duration=coast_duration * 2.0)
-    # Engines-first with steering; ends on ALTITUDE, not a clock, so the
-    # landing burn always gets its chance to run.
+    # Ends on ALTITUDE, not a clock, so the landing burn always gets its
+    # chance to run. Grid-fin steering is enabled by setting coast_seg.entry
+    # (see entry.py and run_mission.fly).
     coast_seg.q_slew = None
-    coast_seg.retrograde_hold = True
-    coast_seg.steer_target = catch_target
     coast_seg.exit_altitude = 4000.0
 
     ign = Segment("ignition_5", Mode.ATTITUDE, n_lit=5, n_gimballing=5,
@@ -676,31 +675,10 @@ def build_mission(
         # and unpowered. Attitude is held engines-first on RCS; grid fins add
         # drag but are not yet used for control.
         coast_seg,
-        # LANDING BURN, staged 13 -> 3 -> 2.
-        # Going straight from 13 to 2 is wrong: it drops thrust by a factor of
-        # 6.5 in one step, which is a deceleration discontinuity the guidance
-        # has to absorb. The real sequence steps down through 3, which also
-        # matches the throttle floor story -- 13 engines cannot throttle low
-        # enough to fly the last few hundred metres, 3 engines cannot hover
-        # (T/W 1.18 at the floor), and 2 engines hover at 51%.
-        # LANDING mode: ignition is TRIGGERED on the suicide-burn condition,
-        # not scheduled. The duration here is an upper bound on how long the
-        # segment may run, not the burn length.
-        # ONE closed-loop landing segment, straight to the catch altitude.
-        #
-        # The hover-and-divert is gone. The approach is treated as ALIGNED with
-        # the chopsticks, so the vehicle arrives at zero velocity at the catch
-        # point rather than stopping beside the tower and translating in. That
-        # removes the lateral problem from the terminal phase entirely.
-        #
-        # Splitting guidance across two target altitudes had the stages
-        # fighting each other -- the 13-engine stage would stop short, hand off
-        # dead, and the 3-engine stage would push back up. One segment, one
-        # target, one velocity reference.
-        #
-        # Ignition is triggered on the velocity profile, throttle is modulated
-        # every step, and the segment ends on a condition. The duration is only
-        # an upper bound.
+        # LANDING BURN: one closed-loop segment, 13 engines braking then 3
+        # for the final approach, ending when the CoM reaches the catch
+        # altitude. Ignition, throttle, engine downselect and attitude are all
+        # outputs of landing.LandingGuidance; the duration is only a bound.
         Segment("landing", Mode.LANDING, n_lit=13, n_gimballing=13,
                 throttle=1.00, duration=400.0,
                 catch_altitude=float(catch_target[2]), q_ref=q_up,

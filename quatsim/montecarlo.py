@@ -309,3 +309,20 @@ def run_campaign(n: int, seed: int = 1, spec: DispersionSpec | None = None,
 
 def spec_dict(spec: DispersionSpec) -> dict:
     return asdict(spec)
+
+
+def write_csv(results: list[dict], path: str) -> str:
+    """One row per case, every dispersion and every scored quantity."""
+    import csv
+    rows = [r["row"] for r in results]
+    keys = []
+    for r in rows:
+        for k in r:
+            if k not in keys:
+                keys.append(k)
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=keys)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    return path

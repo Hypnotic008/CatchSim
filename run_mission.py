@@ -10,15 +10,16 @@ in PyCharm, or `python run_mission.py` from a terminal with the venv active.
     +-- run_mission.py       <- this file
 
 Flags:
-    --resolve     re-solve the boostback duration from scratch (~3 min)
-    --figures     write the static figures
-    --animate     write the summary GIF and a real-time animation
-    --speed 1.0   animation speed multiplier (1.0 = true real time, slow)
+    --figures         mission overview + landing detail figures (figs/)
+    --animate         time-warped MP4 of the whole flight (figs/catch.mp4)
+    --montecarlo N    N dispersed cases + report (figs/monte_carlo.*)
+    --no-steer        fly without grid-fin entry steering, for comparison
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
@@ -37,9 +38,10 @@ from quatsim.vehicle import Vehicle
 # --- converged solution, see SOLUTION.md -----------------------------------
 FLIP_DURATION = 4.0
 BB_THROTTLE = 0.87
+# Nominal 33-engine boostback time. Only a planning reference now: the
+# closed-loop predictive boostback solves the real cutoff in flight.
 T33_BURN = 9.1472         # s on 33 engines
 BB_ELEVATION = 1.0        # deg above horizontal on the retrograde axis
-ALT_BIAS = 0.0            # termination now lands on target without bias
 TARGET = np.array([0.0, 0.0, 105.0])
 
 
@@ -112,45 +114,42 @@ def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--resolve", action="store_true",
-                    help="re-solve the boostback duration (~3 min)")
-    ap.add_argument("--figures", action="store_true")
-    ap.add_argument("--animate", action="store_true")
-    ap.add_argument("--speed", type=float, default=6.0,
-                    help="animation speed; 1.0 is true real time")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("--figures", action="store_true",
+                    help="write figs/mission_overview.png and figs/landing_detail.png")
+    ap.add_argument("--animate", action="store_true",
+                    help="write figs/catch.mp4 (time-warped, ~1 min)")
+    ap.add_argument("--montecarlo", type=int, default=0, metavar="N",
+                    help="run N dispersed cases and write figs/monte_carlo.png")
+    ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--no-steer", action="store_true",
+                    help="disable grid-fin entry steering (for comparison)")
     args = ap.parse_args(argv)
 
+    os.makedirs("figs", exist_ok=True)
     t0 = time.time()
     vehicle, aero, sep, bb0, land, seq = build()
     print(vehicle.summary())
     print(mission_report(sep, bb0, land))
     print()
 
-    t33 = T33_BURN
-    if args.resolve:
-        # Bisect on final downrange using the FULL 6-DOF simulator. Solving on
-        # a simplified model and hoping it matches never worked -- gravity
-        # model, flip thrust direction and timestep quantization each showed up
-        # as tens of km of miss.
-        print("re-solving boostback duration...")
-        lo, hi = 11.0, 13.0
-        for _ in range(18):
-            mid = 0.5 * (lo + hi)
-            x = fly(mid, vehicle, aero, sep, bb0, land, seq)["r"][-1, 0]
-            lo, hi = (mid, hi) if x > 0 else (lo, mid)
-        t33 = 0.5 * (lo + hi)
-        print(f"  converged t33 = {t33:.4f} s\n")
-
-    out = fly(t33, vehicle, aero, sep, bb0, land, seq,
-              log_every=(1 if args.animate else 20))
+    out = fly(T33_BURN, vehicle, aero, sep, bb0, land, seq,
+              log_every=(2 if args.animate else 5), steer=not args.no_steer)
     r = out["r"]
+    le = out["landing_events"]
 
-    print(f"apogee        {r[:, 2].max() / 1000:8.1f} km")
-    if seq._boostback_pred is not None:
-        print(f"predictive 33-engine cutoff  {seq._boostback_pred['remaining_33']:8.4f} s")
-        print(f"predicted target-x residual   {seq._boostback_pred['predicted_x']:8.2f} m")
-    print(f"flight time   {out['t'][-1]:8.1f} s")
+    print(f"apogee                 {r[:, 2].max() / 1000:8.1f} km")
+    hist = out["boostback_history"]
+    if hist:
+        print(f"33-engine cutoff       {hist[-1][0] + hist[-1][1]:8.3f} s MET "
+              f"({len(hist)} closed-loop re-targets, final yaw "
+              f"{np.degrees(hist[-1][2]):+.3f} deg)")
+    print(f"landing ignition       {le['ignition_alt']:8.0f} m at "
+          f"{le['ignition_speed']:.0f} m/s")
+    print(f"13 -> 3 engines        {le['handover_alt']:8.0f} m")
+    print(f"flight time            {out['t'][-1]:8.1f} s")
     print()
     rep = catch_report(out["state"][-1], TARGET)
     for name, (value, ok) in rep["checks"].items():
@@ -159,21 +158,32 @@ def main(argv=None):
     print(f"\n  CAUGHT: {rep['caught']}")
     print(f"\n({time.time() - t0:.0f} s)")
 
+    if args.figures or args.animate:
+        from quatsim import visuals as VIS
     if args.figures:
-        from quatsim import telemetry as T
-        print(T.tracking_error(out, path="tracking_error.png"))
-        print(T.telemetry_panel(out, target=TARGET, path="telemetry_panel.png"))
-
+        print(VIS.mission_overview(out, TARGET, rep,
+                                   path="figs/mission_overview.png"))
+        print(VIS.landing_detail(out, TARGET, rep,
+                                 path="figs/landing_detail.png"))
     if args.animate:
-        from quatsim import telemetry as T
-        from quatsim.realtime import animate_realtime
-        print(T.animate_mission(out, TARGET, n_frames=170, fps=24,
-                                path="mission_summary.gif", hold_seconds=3.0,
-                                visual_align_altitude=180.0))
-        # MP4 needs ffmpeg on PATH; falls back to GIF automatically if absent.
-        print(animate_realtime(out, TARGET, path="mission_rt.mp4",
-                               speed=args.speed, fps=24, hold_seconds=3.0,
-                               visual_align_altitude=180.0))
+        # MP4 via ffmpeg (PATH, else the imageio-ffmpeg wheel); GIF fallback.
+        print(VIS.animate_catch(out, TARGET, path="figs/catch.mp4",
+                                report=rep, progress=print))
+
+    if args.montecarlo:
+        import pickle
+        from quatsim import visuals as VIS
+        from quatsim.montecarlo import run_campaign, write_csv
+        print(f"\nMonte Carlo: {args.montecarlo} dispersed cases + nominal, "
+              f"{args.workers} workers")
+        res = run_campaign(args.montecarlo, seed=args.seed,
+                           workers=args.workers)
+        with open("figs/monte_carlo.pkl", "wb") as fh:
+            pickle.dump(res, fh)
+        print(write_csv(res, "figs/monte_carlo.csv"))
+        print(VIS.monte_carlo_report(res, path="figs/monte_carlo.png"))
+        n_ok = sum(r["row"]["caught"] for r in res)
+        print(f"  caught {n_ok}/{len(res)}")
 
     return 0 if rep["caught"] else 1
 

@@ -171,7 +171,7 @@ def mission_overview(out: dict, target: np.ndarray, report: dict | None = None,
     tgt = np.asarray(target, float)
 
     fig = plt.figure(figsize=(16, 9.4))
-    gs = fig.add_gridspec(3, 4, left=0.05, right=0.985, top=0.885,
+    gs = fig.add_gridspec(3, 4, left=0.085, right=0.985, top=0.885,
                           bottom=0.065, hspace=0.55, wspace=0.28,
                           width_ratios=[1.25, 1.25, 1, 1])
     fig.text(0.05, 0.955, title, fontsize=17, weight="bold", color=INK)
@@ -205,9 +205,11 @@ def mission_overview(out: dict, target: np.ndarray, report: dict | None = None,
         if p >= 3:
             continue            # landing phases are invisible at this scale
         xy = (x_km[k], z_km[k])
-        off = {0: (18, -22), 1: (14, 10), 2: (12, 6)}[p]
+        off = {0: (-60, 26), 1: (22, 12), 2: (-10, 22)}[p]
         ax.annotate(PHASES[p], xy, xytext=off, textcoords="offset points",
-                    color=INK2, fontsize=9)
+                    color=INK2, fontsize=9,
+                    arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8,
+                                    shrinkA=2, shrinkB=3))
         placed.append(p)
     ka = int(np.argmax(r[:, 2]))
     ax.plot(x_km[ka], z_km[ka], "o", ms=7, color=INK, mec=SURFACE, mew=2)
@@ -313,10 +315,16 @@ def _booster_outline_xz(r, q, length=72.3, radius=4.5, com_frac=0.40):
     return poly, aft, nose, a, n
 
 
+# The simulation's catch target is the booster's CENTRE OF MASS. The arms
+# close under the hardpoints near the top of the booster, this far above it.
+HARDPOINT_ABOVE_COM = (1.0 - 0.40) * 72.3 - 8.0
+
+
 def tower_xz(target, height=146.0, width=12.0, arm_reach=15.0):
     """Tower structure placed so the chopstick arm tips close on the target.
-    Returns (lattice segments, arm segments) in the x-z plane, metres."""
-    tx, tz = float(target[0]), float(target[2])
+    Returns (lattice segments, arm segments) in the x-z plane, metres. The
+    arms are drawn at hardpoint height: target (CoM) + HARDPOINT_ABOVE_COM."""
+    tx, tz = float(target[0]), float(target[2]) + HARDPOINT_ABOVE_COM
     face = tx - arm_reach                  # tower face, toward -x
     x0, x1 = face - width, face
     segs = [[(x0, 0), (x0, height)], [(x1, 0), (x1, height)],
@@ -375,19 +383,21 @@ def landing_detail(out: dict, target: np.ndarray, report: dict | None = None,
     times = np.arange(np.ceil(tt[0]), 0.01, 2.0)
     for tk in list(times) + [tt[-1]]:
         k = int(np.argmin(abs(tt - tk)))
+        if rr[k, 2] > 560.0:
+            continue
         pos = rr[k] - np.array([tgt[0], 0, 0])
         poly, *_ = _booster_outline_xz(pos, q[k])
         ax.add_patch(mpatches.Polygon(poly, closed=True, fc="none",
                                       ec=PHASE_COLORS[idx[k]], lw=0.9,
                                       alpha=0.85))
     ax.set_aspect("equal")
-    zmax = min(rr[:, 2].max(), 1400.0)
+    zmax = min(rr[:, 2].max(), 520.0)
     xs = rr[rr[:, 2] < zmax, 0] - tgt[0]
     ax.set_xlim(min(xs.min(), -40) - 40, max(xs.max(), 40) + 40)
     ax.set_ylim(0, zmax + 60)
     ax.set_xlabel("downrange from catch point (m)")
     ax.set_ylabel("altitude (m)")
-    ax.set_title("Side view, booster to scale every 2 s")
+    ax.set_title("Side view below 500 m, booster to scale every 2 s")
     ax.fill_between([-1e4, 1e4], -50, 0, color="#24211c", zorder=0)
 
     def vline(a):
@@ -409,13 +419,12 @@ def landing_detail(out: dict, target: np.ndarray, report: dict | None = None,
         cb.ax.tick_params(colors=MUTED, labelsize=7)
     at.add_patch(mpatches.Circle((0, 0), 1.0, fc="none", ec=INK2, lw=1.2,
                                  ls="--"))
-    at.text(0.72, 0.72, "1 m", color=INK2, fontsize=8)
+    at.text(0.75, -1.45, "1 m limit", color=INK2, fontsize=8)
     at.plot(ex[-1:], ey[-1:], "o", ms=8, color=INK, mec=SURFACE, mew=2)
-    lim = max(3.0, float(np.abs(pts).max()) * 1.1) if len(pts) else 5.0
-    lim = min(lim, 60.0)
+    lim = 5.0
     at.set_xlim(-lim, lim); at.set_ylim(-lim, lim)
     at.set_aspect("equal")
-    at.set_title("Top view, last 150 m of descent")
+    at.set_title("Top view of the last 150 m, zoomed to ±5 m")
     at.set_xlabel("x (m)"); at.set_ylabel("y (m)")
 
     # --- lateral miss ------------------------------------------------------
@@ -609,7 +618,10 @@ def monte_carlo_report(results: list[dict], path: str = "figs/monte_carlo.png",
     if (~ok).any():
         e.hist(p[~ok], bins=bins, color=CRITICAL, edgecolor=SURFACE, lw=2,
                label="missed")
-    e.axvline(0, color=CRITICAL, lw=1)
+    if np.nanmin(p) < 5.0:
+        e.axvline(0, color=CRITICAL, lw=1)
+        e.text(0.3, 0.5, "tanks dry", color=CRITICAL, fontsize=8,
+               transform=e.get_xaxis_transform())
     e.set_title("Propellant remaining at catch (t)")
     e.set_xlabel("t"); e.set_ylabel("cases")
     e.text(0.02, 0.92, f"min {np.nanmin(p):.1f} t · median "
@@ -730,7 +742,8 @@ def _engine_layout():
 def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
                   report: dict | None = None, fps: int = 30,
                   hold_seconds: float = 4.0, dpi: int = 100,
-                  max_frames: int | None = None, progress=None):
+                  max_frames: int | None = None, progress=None,
+                  snapshots: list | None = None):
     """
     Time-warped animation of the whole flight.
 
@@ -775,8 +788,8 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
     ax.add_collection(arm_lc)
 
     # full planned path, faint, and the flown trail by phase
-    ax.plot(r_all[:, 0], r_all[:, 2], color="#ffffff", alpha=0.07, lw=1.0,
-            zorder=2)
+    ax.plot(r_all[:, 0], r_all[:, 2], color="#ffffff", alpha=0.12, lw=1.0,
+            zorder=2, ls=(0, (4, 4)))
     trail = [ax.plot([], [], color=c, lw=2.0, zorder=3,
                      solid_capstyle="round")[0] for c in PHASE_COLORS]
 
@@ -799,8 +812,10 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
     phase_txt = ax.text(0.02, 0.92, "", transform=ax.transAxes, fontsize=20,
                         weight="bold", va="top")
     banner = ax.text(0.5, 0.86, "", transform=ax.transAxes, ha="center",
-                     fontsize=34, weight="bold", color=GOOD, alpha=0.0,
-                     zorder=20)
+                     va="top", fontsize=34, weight="bold", color=GOOD,
+                     alpha=0.0, zorder=20,
+                     bbox=dict(boxstyle="round,pad=0.5", fc=PAGE, ec="none",
+                               alpha=0.0))
     scale_bar, = ax.plot([], [], color=INK2, lw=2, transform=ax.transAxes)
 
     # top-view inset for the final approach
@@ -808,7 +823,9 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
     axi.set_facecolor("#0d1522")
     axi.set_xlim(-6, 6); axi.set_ylim(-6, 6); axi.set_aspect("equal")
     axi.add_patch(mpatches.Circle((0, 0), 1.0, fc="none", ec=INK2, ls="--"))
-    axi.set_title("top view, final approach (m)", fontsize=9, color=INK2)
+    axi.set_title("top view, ±8 m around the catch point", fontsize=9,
+                  color=INK2)
+    axi.text(0.0, -1.9, "1 m", ha="center", color=INK2, fontsize=8)
     axi.tick_params(labelsize=7)
     inset_trail, = axi.plot([], [], color=PHASE_COLORS[4], lw=1.6)
     inset_dot, = axi.plot([], [], "o", color=INK, ms=6)
@@ -846,22 +863,27 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
         if k == 2:
             a.set_xlabel("mission elapsed time (s)", fontsize=8.5)
         strips.append((a, y, live, cur))
-    lg = fig.add_axes([0.665, 0.525, 0.33, 0.035]); lg.axis("off")
+    lg = fig.add_axes([0.665, 0.535, 0.33, 0.05]); lg.axis("off")
     for j, (nm, c) in enumerate(zip(PHASES, PHASE_COLORS)):
-        lg.plot([j * 0.2, j * 0.2 + 0.03], [0.5, 0.5], color=c, lw=3)
-        lg.text(j * 0.2 + 0.035, 0.5, nm, va="center", fontsize=7.8,
-                color=INK2)
+        x0, y0 = (j % 3) * 0.34, 0.75 - (j // 3) * 0.5
+        lg.plot([x0, x0 + 0.04], [y0, y0], color=c, lw=3)
+        lg.text(x0 + 0.05, y0, nm, va="center", fontsize=8.5, color=INK2)
     lg.set_xlim(0, 1); lg.set_ylim(0, 1)
 
     cam = {"cx": None, "cz": None, "hs": None}
 
     def camera(r, alt_agl, dtv):
-        # half-height of the view: generous far out, true scale near the tower
-        hs_t = float(np.clip(0.62 * alt_agl + 70.0, 95.0, 70_000.0))
-        # keep the tower in frame on the way down
-        blend = float(np.clip(1.0 - (alt_agl - 300.0) / 2500.0, 0.0, 1.0))
-        cx_t = (1 - blend) * r[0] + blend * (0.5 * (r[0] + tgt[0]) - 10.0)
-        cz_t = (1 - blend) * r[2] + blend * max(0.55 * r[2] + 20.0, hs_t * 0.8)
+        # Half-height of the view: generous far out, true scale near the
+        # tower. Sized on height above GROUND so the whole booster (nose
+        # ~43 m above the CoM) always fits once the ground is pinned in view.
+        h = max(float(r[2]), 0.0)
+        hs_t = float(np.clip(0.62 * h + 75.0, 110.0, 70_000.0))
+        # Below ~3 km, slide the framing onto the tower: horizontally between
+        # booster and tower, vertically with the ground near the bottom edge.
+        blend = float(np.clip(1.0 - (h - 400.0) / 2600.0, 0.0, 1.0))
+        blend = blend * blend * (3.0 - 2.0 * blend)
+        cx_t = (1 - blend) * r[0] + blend * (0.5 * (r[0] + tgt[0]) - 12.0)
+        cz_t = (1 - blend) * r[2] + blend * (0.88 * hs_t)
         if cam["hs"] is None:
             cam.update(cx=cx_t, cz=cz_t, hs=hs_t)
         a = 1.0 - np.exp(-dtv / 0.6)
@@ -941,8 +963,13 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
         scale_txt.set_text(lab + ("   booster drawn to scale" if exag == 1.0
                                   else f"   booster ×{exag:.0f} for visibility"))
         warp_txt.set_text("■ HOLD" if hold else f"▶ {rate:4.1f}× real time")
-        phase_txt.set_text(PHASES[ph].upper())
-        phase_txt.set_color(PHASE_COLORS[ph])
+        if hold:
+            ok_ = report is None or report["caught"]
+            phase_txt.set_text("IN THE CHOPSTICKS" if ok_ else "MISSED")
+            phase_txt.set_color(GOOD if ok_ else CRITICAL)
+        else:
+            phase_txt.set_text(PHASES[ph].upper())
+            phase_txt.set_color(PHASE_COLORS[ph])
 
         # final-approach inset
         if alt_agl < 350.0 or hold:
@@ -952,9 +979,7 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
             ey = r_all[:k + 1][mlow, 1] - tgt[1]
             inset_trail.set_data(ex, ey)
             inset_dot.set_data([r[0] - tgt[0]], [r[1] - tgt[1]])
-            lim = max(3.0, min(60.0, float(np.max(np.abs(np.r_[ex, ey, 1.0])))
-                               * 1.15)) if len(ex) else 6.0
-            axi.set_xlim(-lim, lim); axi.set_ylim(-lim, lim)
+            axi.set_xlim(-8, 8); axi.set_ylim(-8, 8)
         else:
             axi.set_visible(False)
 
@@ -989,6 +1014,7 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
             ok = report["checks"]
             a_in = min((fi - len(frames_t) + 1) / (0.6 * fps), 1.0)
             banner.set_alpha(a_in)
+            banner.get_bbox_patch().set_alpha(0.75 * a_in)
             banner.set_color(GOOD if report["caught"] else CRITICAL)
             lat = ok["lateral_error_m"][0]
             banner.set_text(("✔ CATCH" if report["caught"] else "✖ MISS")
@@ -996,6 +1022,23 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
                             f" · {ok['tilt_deg'][0]:.2f}°")
             banner.set_fontsize(28)
         return []
+
+    if snapshots:
+        # Step every frame (the camera is a smoothed state) but only render
+        # the requested mission times, as PNGs. For checking the look quickly.
+        want = sorted(snapshots)
+        paths, j = [], 0
+        base = os.path.splitext(path)[0]
+        for fi in range(n_frames):
+            draw(fi)
+            tq = frames_t[min(fi, len(frames_t) - 1)]
+            while j < len(want) and (tq >= want[j] or fi == n_frames - 1):
+                pth = f"{base}_t{want[j]:05.0f}.png"
+                fig.savefig(pth, dpi=dpi, facecolor=PAGE)
+                paths.append(pth)
+                j += 1
+        plt.close(fig)
+        return paths
 
     have_ff = path.endswith(".mp4") and _ffmpeg()
     if path.endswith(".mp4") and not have_ff:

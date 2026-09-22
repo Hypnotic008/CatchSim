@@ -2,3 +2,4 @@ numpy>=2.0
 scipy>=1.11
 matplotlib>=3.8
 pytest>=7.0
+imageio-ffmpeg>=0.4   # MP4 export without a system ffmpeg

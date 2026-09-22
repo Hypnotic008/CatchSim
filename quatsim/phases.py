@@ -78,133 +78,35 @@ class Segment:
     # feasible reference plus its rate and acceleration, keeping the error
     # small and the actuators off their stops.
     q_slew: object | None = None
-    # COAST mode: hold engines-first, body +x opposite the velocity vector.
-    # This is the descent attitude -- the booster falls engine end forward.
-    retrograde_hold: bool = False
-    # LANDING mode: altitude at which the burn must bring the vehicle to rest.
+    # LANDING mode: catch altitude (of the centre of mass) and target point.
     catch_altitude: float = 105.0
-    throttle_floor: float = 0.40
-    # Engine counts the landing burn may downselect through, most to fewest.
-    # 13 -> 3. No 2-engine stage: it would run for only a couple of seconds
-    # and 3 engines can null the remaining velocity on their own.
-    downselect: tuple = (13, 3)
-    # Fractions of the ignition-to-catch altitude band at which to step down.
-    # (0.25, 0.08) with downselect (13, 3, 2) means: 13 engines for the top
-    # 75% of the descent, 3 below that, 2 for the last 8%.
-    downselect_margin: float = 0.60   # demand must fit under the new count
-    tower: object | None = None       # CatchTower; enables position deadband
-    # Fraction of hover thrust held as a floor during the burn. 0 = no floor
-    # (thrust can go to zero, killing lateral authority); 1 = full hover.
-    # Terminal (3-engine) phase: constant descent rate, easing to v_touch
-    # over the last terminal_ease metres.
-    v_terminal_descent: float = 6.0   # m/s
-    # Altitude at which the 13-engine brake hands over to the 3-engine final
-    # approach. Flight 7 timing (~7 s on 13, ~18 s on 3) implies the handover
-    # happens well above the catch with plenty of runway left.
-    handover_altitude: float = 180.0
-    # Enable the two-phase (brake / precision-approach) vertical profile.
-    # The validated runnable configuration enables this explicitly; keeping the
-    # field false here preserves a clean single-phase option for comparisons.
-    two_phase: bool = False
-    # Solve the braking deceleration from the terminal conditions instead of
-    # taking a fraction of available thrust. Throttle becomes an output.
-    solve_brake: bool = False
-    # Optimal terminal guidance in the 3-engine phase: drives lateral position
-    # AND velocity to zero together, instead of nulling position and arriving
-    # leaning.
-    terminal_guidance: bool = True
-    # Fraction of available deceleration at which the brake lights. <1 leaves
-    # margin, so the throttle starts below 100% and has room to push harder.
-    brake_margin: float = 0.85
-    terminal_ease: float = 40.0       # m
-    # Terminal-only tilt taper. The main landing taper is for the long brake
-    # and must not consume the lateral authority reserved for the 3-engine
-    # precision phase. The terminal phase gets its own 180 -> catch envelope.
-    terminal_taper_altitude: float = 75.0  # m
-    terminal_upright_height: float = 5.0  # m above catch plane
-    # The nominal 40% Raptor floor is retained for the main burn. Three
-    # engines cannot quite hover at that floor in this V3 mass model, so the
-    # precision phase may use a lower effective floor to represent the
-    # unresolved real minimum-throttle behavior rather than bouncing above the
-    # catch plane. This is an assumption, not a measured engine limit.
-    terminal_throttle_floor: float = 0.34
-    hover_floor: float = 0.0
-    # LANDING guidance tuning
-    # COAST: exit when the vehicle drops below this altitude, instead of when
-    # a fixed duration expires. Every other duration in this simulation is
-    # either solved or measured; a clocked coast was the last one still running
-    # on a guessed number, and it was flying the vehicle into the ground before
-    # the landing segment ever started.
-    exit_altitude: float | None = None
-    # COAST steering: bias the engines-first attitude to aim the impact point.
-    steer_target: np.ndarray | None = None
-    k_steer: float = 2e-5        # rad of offset per metre of lateral error
-    steer_limit: float = 0.30    # max offset fraction
-    design_frac: float = 0.20   # fraction of available decel the profile uses
-    v_touch: float = 1.0        # m/s, terminal descent rate at the target
-    k_v: float = 0.9            # velocity-error gain
-    k_lat: float = 0.9          # lateral velocity-reference tracking gain
-    k_pos: float = 0.02         # lateral POSITION gain (legacy, unused by
-                                # the braking profile)
-    # Terminal lateral velocity the guidance aims for. NOT zero: the catch
-    # interface is a pair of rails, which can absorb some sliding. Demanding a
-    # mathematically stationary vehicle at contact is a harder problem than the
-    # hardware actually poses. THIS IS A SIMULATION ASSUMPTION, not a validated
-    # structural limit -- establishing what the arms can really absorb is an
-    # interface and structural-dynamics question.
-    v_lat_terminal: float = 0.5  # m/s
-    # Desired horizontal speed at the 13 -> 3 handover. Zero is the natural
-    # target for the precision phase: the three-engine controller should not
-    # inherit a large lateral velocity and then spend its short final runway
-    # braking it.
-    v_lat_handover: float = 0.5   # m/s
-    use_altitude_ceiling: bool = False
-    # Fraction of available lateral authority the braking profile designs to.
-    # Too high and v_ref is large near the target: the vehicle arrives fast and
-    # overshoots, then has to chase back. Measured at 0.35 the lateral error
-    # converged to 80 m and then DIVERGED to 330 m.
-    lat_design_frac: float = 0.15
-    # Lean limit during the landing burn. 30 deg, not 15.
-    #
-    # THIS IS THE BINDING CONSTRAINT, and it was mistaken for a gain problem
-    # for a long time. The booster returns to the pad at ~188 m/s horizontally
-    # -- that is not an error, it is the return velocity -- and killing it over
-    # the ~855 m available needs v^2/2d = 20.7 m/s^2 of lateral deceleration.
-    # At a_vert ~ 30 m/s^2 that is arctan(20.7/30) = 34.6 deg of tilt.
-    #
-    # Capped at 15 deg the command saturated permanently, which is why sweeping
-    # k_lat and lat_design_frac produced IDENTICAL results to a tenth of a
-    # metre across 7x gain changes: the actuator was pegged and the gains were
-    # not reaching it.
-    #
-    # Raising the cap turns the burn-duration basin from a knife edge into a
-    # bowl: across +/-0.016 s the lateral error spread falls from ~800 m to
-    # ~280 m, and the central durations land between 14 and 74 m instead of
-    # between 8 and 533 m.
-    max_tilt: float = np.radians(20)
-    taper_altitude: float = 600.0       # m above target where lean fades out
-    r_target: np.ndarray | None = None       # POSITION mode target
-    divert_duration: float = 0.0
-    # Live predictive boostback cutoff. The controller predicts the future
-    # boostback+tail+coast with the same RK4 plant before choosing cutoff.
-    predictive_boostback: bool = False
-    boostback_target_altitude: float = 1_200.0
-    boostback_target_x: float | None = None
-    boostback_reference_33: float = 9.1472
-    boostback_tail13: float = 3.0
-    boostback_tail3: float = 3.0
-    boostback_target_y: float = 0.0
+    r_target: np.ndarray | None = None
     # LANDING mode: guidance configuration (landing.LandingConfig). None
     # builds a default one aimed at r_target.
     landing: object | None = None
     # COAST mode: entry-guidance configuration (entry.EntryConfig). None
-    # leaves the coast unsteered.
+    # leaves the coast unsteered -- the vehicle simply weathercocks.
     entry: object | None = None
+    # COAST: exit when the vehicle drops below this altitude, instead of when
+    # a fixed duration expires. A clocked coast was flying the vehicle into
+    # the ground before the landing segment ever started.
+    exit_altitude: float | None = None
+    # POSITION mode
+    divert_duration: float = 0.0
+    # Closed-loop predictive boostback (boostback_33 only). The cutoff and
+    # burn heading are re-solved in flight against an RK4 prediction of the
+    # remaining burn, the 13/3-engine tail and the coast; see run().
+    predictive_boostback: bool = False
+    boostback_target_altitude: float = 1_200.0
+    boostback_target_x: float | None = None
+    boostback_target_y: float = 0.0
     boostback_steer_crossrange: bool = True
+    boostback_tail13: float = 3.0
+    boostback_tail3: float = 3.0
     # Re-solve the cutoff this often during the 33-engine burn, while more
     # than `boostback_resolve_min_remaining` seconds of burn remain.
-    boostback_resolve_period: float = 2.5
-    boostback_resolve_min_remaining: float = 1.5
+    boostback_resolve_period: float = 1.5
+    boostback_resolve_min_remaining: float = 0.6
 
 
 @dataclass
@@ -401,12 +303,9 @@ class FlightSequencer:
         self.gnc_vehicle = vehicle
         self.gnc_aero = aero
         self._ignited = False
-        self._burn_done = False
         self._segment_done = False
-        self._lat_log = []
         self._t_now = 0.0
         self._landing_n_lit = 0
-        self._a_brake = None
         self._ignition_alt = float("nan")
         self._ignition_v = float("nan")
         self._boostback_cutoff = False
@@ -419,7 +318,6 @@ class FlightSequencer:
         log = FlightLog()
         dry_reported = False
         step = 0          # counts every integrator step, NOT logged samples
-        self._lat_log = []
         self._ignition_alt = float("nan")
         self._ignition_v = float("nan")
         self._boostback_cutoff = False
@@ -427,27 +325,22 @@ class FlightSequencer:
         self._boostback_pred_t = -1e9
         self._boostback_cutoff_tseg = None
         self._boostback_history = []
+        self._bb_q_base = None
+        self._bb_yaw = 0.0
         self._landing = None
         self._guid_log = []
         self._thrust_scale = 1.0
+        self._mdot_scale = 1.0
         self._thrust_scale_n = 0.0
         self._entry = None
         self._entry_log = []
         self._drag_scale = 1.0
         import copy as _copy
         self._est_aero = _copy.copy(self.gnc_aero)
-        self._bb_q_base = None
-        self._bb_yaw = 0.0
-        self._landing_n_lit = 0
-        self._a_brake = None
         self._ignited = False
-        self._burn_done = False
         self._segment_done = False
-        self._lat_log = []
         self._t_now = 0.0
         self._landing_n_lit = 0
-        self._ignition_alt = float("nan")
-        self._ignition_v = float("nan")
         self._terminal_dispersion_applied = False
 
         for seg in segments:
@@ -663,7 +556,6 @@ class FlightSequencer:
 
     def _finish(self, out: dict) -> dict:
         """Attach guidance telemetry to the flight log."""
-        out["lat_log"] = list(self._lat_log)
         out["ignition_alt"] = self._ignition_alt
         out["ignition_v"] = self._ignition_v
         out["boostback_history"] = list(self._boostback_history)
@@ -712,8 +604,16 @@ class FlightSequencer:
         if a_model <= 0.0:
             return
         ratio = float((a_sens - drag) @ x_b) / a_model
+        # Mass-flow ratio from tank gauging: measured propellant drop over the
+        # step against the model's flow. With thrust alone, a +2% Isp
+        # dispersion made the predictor expect the vehicle to lighten faster
+        # than it did, cut the burn early, and arrive ~750 m long.
+        mdot_meas = (prop - float(s_new[D6.P_INDEX])) / dt
+        mdot_model = gv.mass_flow(seg.n_lit, throttle, vacuum=False)
+        mratio = mdot_meas / mdot_model if mdot_model > 0 else 1.0
         n = self._thrust_scale_n
         self._thrust_scale = (self._thrust_scale * n + ratio) / (n + 1.0)
+        self._mdot_scale = (self._mdot_scale * n + mratio) / (n + 1.0)
         self._thrust_scale_n = min(n + 1.0, 400.0)
 
     def _entry_reference(self, cfg, r, v, q, prop):
@@ -746,20 +646,23 @@ class FlightSequencer:
         h = float(r[2])
         I = self.vehicle.inertia(prop)
         ctrl = self.attitude
+        v_air = self.gnc_aero.air_velocity(v, h)
+        speed = float(np.linalg.norm(v_air))
+        q_dyn = ENV.dynamic_pressure(v_air, h)
+        mach = speed / max(ENV.speed_of_sound(h), 1.0)
+        fin_max = self.fins.max_torque(mach, q_dyn)
+        rcs = ctrl.roll.max_rcs_pitch_yaw()
+        py_max = fin_max + rcs
+        # Bandwidth from the authority actually available, so a 0.3 rad
+        # error does not saturate: RCS alone high up, fins + RCS lower down.
+        wn = float(np.clip(np.sqrt(py_max / (I[1, 1] * 0.3)), 0.03, 1.0))
         saved = ctrl.gains
-        ctrl.gains = ControlGains(wn=1.0, zeta=0.8)
+        ctrl.gains = ControlGains(wn=wn, zeta=0.9)
         try:
             tau, _ = ctrl.torque_command(q, w, q_ref, np.zeros(3), I)
         finally:
             ctrl.gains = saved
-        v_air = self.gnc_aero.air_velocity(v, h)
         tau = tau - AERO.restoring_moment(q_ref, v_air, h)
-        speed = float(np.linalg.norm(v_air))
-        q_dyn = ENV.dynamic_pressure(v_air, h)
-        mach = speed / ENV.speed_of_sound(h)
-        fin_max = self.fins.max_torque(mach, q_dyn)
-        rcs = ctrl.roll.max_rcs_pitch_yaw()
-        py_max = fin_max + rcs
         roll_applied, *_ = ctrl.roll.allocate_roll(self.vehicle,
                                                    float(tau[0]), 0, 0.0)
         return np.array([roll_applied,
@@ -803,8 +706,12 @@ class FlightSequencer:
         """Guidance vehicle with thrust scaled by the in-flight estimate."""
         import copy as _copy
         v = _copy.copy(self.gnc_vehicle)
-        v.thrust_per_engine = self.gnc_vehicle.thrust_per_engine * float(
-            np.clip(self._thrust_scale, 0.8, 1.2))
+        kt = float(np.clip(self._thrust_scale, 0.8, 1.2))
+        km = float(np.clip(self._mdot_scale, 0.8, 1.2))
+        v.thrust_per_engine = self.gnc_vehicle.thrust_per_engine * kt
+        # mass_flow = thrust / (Isp g0): scale Isp so the flow scales by km
+        v.isp_sl = self.gnc_vehicle.isp_sl * kt / km
+        v.isp_vac = self.gnc_vehicle.isp_vac * kt / km
         return v
 
     def _actuate(self, seg: Segment, s: np.ndarray, t_seg: float,

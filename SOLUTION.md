@@ -1,3 +1,7 @@
+> **Historical log.** This file records how the original single-trajectory
+> solution was developed. The guidance it describes has been replaced; see
+> `README.md` for the current architecture and the Monte Carlo results.
+
 # quatsim — Super Heavy RTLS simulation
 
 ## Status: 6/7 on the single-phase baseline. Two-phase landing is phase-1-complete.

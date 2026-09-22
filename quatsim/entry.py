@@ -14,7 +14,9 @@ a few degrees off the relative wind and let body lift move the arrival point.
 
 HOW
 ---
-Every ``period`` seconds, once dynamic pressure is useful:
+Above the atmosphere the reference is simply tail-first along the relative
+wind, held on RCS, so the vehicle enters aligned. Then every ``period``
+seconds, once dynamic pressure is useful:
 
   1. PREDICT where the vehicle will cross ``aim_altitude`` if it flew
      straight down the wind from here (point mass, guidance's own drag model,
@@ -118,10 +120,18 @@ class EntryGuidance:
         if speed < 5.0:
             return None, {}
         q_dyn = 0.5 * ENV.density(r[2]) * speed * speed
-        if q_dyn < c.q_min:
-            return None, {}
         m = self.vehicle.mass(prop)
         v_hat = v_air / speed
+        z_now = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
+        if q_dyn < c.q_min:
+            # Too thin to steer, but not too thin to matter: hold tail-first
+            # along the relative wind (RCS) so the vehicle ENTERS aligned.
+            # Left alone it arrived at the sensible atmosphere off-trim and
+            # swung +/-25 deg about it, and with body lift those swings threw
+            # it ~1 km sideways before the fins had any authority.
+            return (attitude_from_pointing(-v_hat, roll_reference=z_now),
+                    {"alpha_deg": 0.0, "alpha_lim_deg": 0.0,
+                     "q_dyn": q_dyn, "mach": speed / ENV.speed_of_sound(r[2])})
 
         if t - self._t_last >= c.period:
             self._t_last = t
@@ -148,7 +158,6 @@ class EntryGuidance:
             # Nose tilted AWAY from the desired force direction produces a
             # normal force TOWARD it (crossflow opposes v_perp).
             d = np.cos(alpha) * tail_first - np.sin(alpha) * u
-        z_now = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
         q_ref = attitude_from_pointing(d, roll_reference=z_now)
         return q_ref, {"alpha_deg": float(np.degrees(alpha)),
                        "alpha_lim_deg": float(np.degrees(alpha_lim)),

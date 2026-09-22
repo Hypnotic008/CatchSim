@@ -123,9 +123,13 @@ class LandingConfig:
     t_go_floor: float = 2.5
     settle_time: float = 3.0              # s of near-upright flight at the end
     # Terminal lateral velocity field (see the brake equivalents).
-    term_lat_frac: float = 0.5
-    term_lat_tau: float = 3.5
-    term_lat_gain: float = 0.8
+    # Tuned against the landing-detail plots: 0.5 / 3.5 s / 0.8 caught, but
+    # as a 3 s limit cycle swinging 0-12 deg against attitude-loop lag.
+    term_lat_frac: float = 0.3
+    term_lat_tau: float = 5.0
+    term_lat_gain: float = 0.4
+    dist_tau: float = 3.0                 # s, disturbance-observer filter
+    dist_max: float = 0.5                 # m/s^2, observer clamp
     # Brake lateral velocity field: design deceleration as a fraction of the
     # tilt-limited lateral authority, near-target time constant, and gain.
     brake_lat_frac: float = 0.35
@@ -195,6 +199,8 @@ class LandingGuidance:
         self.handover_alt = float("nan")
         self.handover_t = float("nan")
         self.roll_start = None
+        self._d_hat = np.zeros(2)
+        self._obs_prev = None
 
     # ------------------------------------------------------------------
     # vertical references
@@ -342,6 +348,11 @@ class LandingGuidance:
             else:
                 v_des = np.zeros(2)
             a_xy = c.term_lat_gain * (v_des - v[:2])
+            # Cancel the estimated steady lateral disturbance (wind force the
+            # drag model does not know). Without it a 12 m/s surface wind
+            # left a ~0.9 m steady offset: the velocity field needs an error
+            # to generate any force.
+            a_xy = a_xy - self._d_hat
             # Envelope closes `settle_time` before the catch so the attitude
             # loop has time to null the last of the lean and its rate.
             max_tilt = min(c.max_tilt_terminal,
@@ -369,6 +380,7 @@ class LandingGuidance:
             fn = float(np.linalg.norm(f))
         throttle = float(np.clip(fn / f_avail, floor, 1.0))
         direction = f / max(fn, 1e-9)
+        self._observe(t, v, q, m, drag, throttle)
 
         info.update(t_go=t_go, a_x=float(a_des[0]), a_y=float(a_des[1]),
                     a_z=float(a_des[2]),
@@ -378,6 +390,38 @@ class LandingGuidance:
 
         return LandingCommand(self.phase, self.n_lit, throttle, direction,
                               self._roll_ref(q, direction, h), info)
+
+    def _observe(self, t, v, q, m, drag, throttle):
+        """
+        Horizontal disturbance observer, terminal phase only.
+
+        Measured horizontal acceleration (differenced velocity, i.e. an ideal
+        IMU) minus what the thrust vector ACTUALLY pointing along the current
+        body axis, plus the modelled drag, should have produced one tick
+        earlier. Comparing against the actual attitude rather than the
+        command keeps attitude-loop lag out of the estimate (the first
+        version did, and biased a calm-air catch by 0.3 m). Low-pass filtered
+        over `dist_tau`, clamped, and reset at handover.
+        """
+        c = self.cfg
+        if self.phase != TERMINAL:
+            self._d_hat = np.zeros(2)
+            self._obs_prev = None
+            return
+        x_b = Q.rotate(q, np.array([1.0, 0.0, 0.0]))
+        f = self.vehicle.axial_thrust(self.n_lit, throttle) / m
+        a_exp = (f * x_b + drag / m)[:2]
+        if self._obs_prev is not None:
+            t0, v0, a0 = self._obs_prev
+            dt = t - t0
+            if dt > 1e-6:
+                a_meas = (v[:2] - v0[:2]) / dt
+                k = min(dt / c.dist_tau, 1.0)
+                self._d_hat = self._d_hat + k * ((a_meas - a0) - self._d_hat)
+                n = float(np.linalg.norm(self._d_hat))
+                if n > c.dist_max:
+                    self._d_hat *= c.dist_max / n
+        self._obs_prev = (t, v.copy(), a_exp)
 
     # ------------------------------------------------------------------
     # roll
