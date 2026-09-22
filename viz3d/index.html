@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Super Heavy Catch 3D</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --ink: #f4f4f2;
+    --ink2: rgba(244, 244, 242, 0.72);
+    --muted: rgba(244, 244, 242, 0.45);
+    --line: rgba(244, 244, 242, 0.22);
+    --panel: rgba(8, 10, 14, 0.55);
+    --good: #3fd16a;
+  }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { font-family: "DejaVu Sans", "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  #view { position: absolute; inset: 0; }
+  #view canvas { display: block; }
+  .hud { position: absolute; pointer-events: none; }
+  .mono { font-family: "DejaVu Sans Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  #tl { left: 3.2vw; top: 3.4vh; }
+  #tl .title { font-size: 1.05vw; letter-spacing: 0.32em; color: var(--ink2); }
+  #tl .phase { font-size: 1.55vw; letter-spacing: 0.18em; margin-top: 0.6vh; font-weight: 600; }
+
+  #tr { right: 3.2vw; top: 3.4vh; text-align: right; }
+  #warp { font-size: 1.25vw; letter-spacing: 0.12em; }
+  #warp .x { font-size: 2.1vw; font-weight: 600; }
+  #warpsub { font-size: 0.72vw; letter-spacing: 0.25em; color: var(--muted); margin-top: 0.3vh; }
+
+  #bottom { left: 0; right: 0; bottom: 0; height: 24vh;
+    background: linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0.0)); }
+  #readouts { left: 3.2vw; bottom: 4.2vh; }
+  .ro { margin-bottom: 1.1vh; }
+  .ro .k { font-size: 0.68vw; letter-spacing: 0.3em; color: var(--muted); }
+  .ro .v { font-size: 1.85vw; }
+  .ro .u { font-size: 0.8vw; color: var(--ink2); margin-left: 0.3vw; letter-spacing: 0.1em; }
+  #stage { left: 3.2vw; bottom: 17vh; font-size: 0.72vw; letter-spacing: 0.35em; color: var(--ink2); }
+
+  #engines { left: 15.5vw; bottom: 2.6vh; width: 9.4vw; height: 9.4vw; }
+  #attitude { left: 25.6vw; bottom: 2.6vh; width: 9.4vw; height: 9.4vw; }
+  .caption { position: absolute; bottom: -0.2vh; width: 100%; text-align: center;
+    font-size: 0.62vw; letter-spacing: 0.3em; color: var(--muted); }
+
+  #clockwrap { left: 38vw; right: 22vw; bottom: 3vh; }
+  #clock { text-align: center; font-size: 2.2vw; letter-spacing: 0.08em; }
+  #clock .tp { font-size: 1.0vw; color: var(--ink2); margin-right: 0.4vw; }
+  #timeline { position: relative; height: 5.2vh; margin-top: 0.8vh; }
+  #timeline .axis { position: absolute; left: 0; right: 0; top: 1.2vh; height: 1px; background: var(--line); }
+  #timeline .done { position: absolute; left: 0; top: 1.2vh; height: 2px; margin-top: -0.5px; background: var(--ink); }
+  #timeline .ev { position: absolute; top: 1.2vh; }
+  #timeline .ev .dot { position: absolute; width: 0.55vw; height: 0.55vw; border-radius: 50%;
+    border: 1.5px solid var(--ink2); background: #000; transform: translate(-50%, -50%); }
+  #timeline .ev.past .dot { background: var(--ink); border-color: var(--ink); }
+  #timeline .ev .lab { position: absolute; top: 1.0vh; transform: translateX(-50%); white-space: nowrap;
+    font-size: 0.55vw; letter-spacing: 0.18em; color: var(--muted); }
+  #timeline .ev.past .lab { color: var(--ink2); }
+  #timeline .ev.alt .lab { top: 2.6vh; }
+
+  #right { right: 3.2vw; bottom: 4.2vh; text-align: right; }
+
+  #score { right: 3.2vw; top: 14vh; width: 17vw; padding: 1.2vh 1vw; background: var(--panel);
+    border-left: 2px solid var(--good); opacity: 0; transition: none; }
+  #score .h { font-size: 0.9vw; letter-spacing: 0.3em; color: var(--good); margin-bottom: 1vh; font-weight: 600; }
+  #score .row { display: flex; justify-content: space-between; font-size: 0.72vw; line-height: 1.75;
+    color: var(--ink2); letter-spacing: 0.06em; }
+  #score .row b { color: var(--ink); font-weight: 400; }
+
+  #ui { position: absolute; left: 50%; bottom: 25vh; transform: translateX(-50%);
+    display: none; gap: 8px; align-items: center; pointer-events: auto;
+    background: var(--panel); padding: 6px 10px; border-radius: 6px; }
+  #ui button { background: rgba(255,255,255,0.1); color: var(--ink); border: 1px solid var(--line);
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 13px; }
+  #ui input[type=range] { width: 38vw; }
+  #ui label { font-size: 12px; color: var(--ink2); }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="view"></div>
+
+<div id="tl" class="hud">
+  <div class="title">SUPER HEAVY V3 · RETURN AND CATCH</div>
+  <div class="phase" id="phase">—</div>
+</div>
+<div id="tr" class="hud">
+  <div id="warp" class="mono"><span class="x" id="warpx">1×</span></div>
+  <div id="warpsub">REAL TIME</div>
+</div>
+
+<div id="bottom" class="hud"></div>
+<div id="stage" class="hud">BOOSTER</div>
+<div id="readouts" class="hud">
+  <div class="ro"><div class="k">SPEED</div><div class="v mono" id="spd">0</div></div>
+  <div class="ro"><div class="k">ALTITUDE</div><div class="v mono" id="alt">0</div></div>
+</div>
+<div id="engines" class="hud"><svg id="engsvg" viewBox="-1.35 -1.35 2.7 2.7" width="100%" height="100%"></svg><div class="caption" id="engcap">0 / 33</div></div>
+<div id="attitude" class="hud"><canvas id="attcv"></canvas><div class="caption">ATTITUDE</div></div>
+
+<div id="clockwrap" class="hud">
+  <div id="clock" class="mono"><span class="tp">T+</span><span id="clk">00:00:00</span></div>
+  <div id="timeline"><div class="axis"></div><div class="done" id="tldone"></div></div>
+</div>
+
+<div id="right" class="hud">
+  <div class="ro"><div class="k">TO TOWER</div><div class="v mono" id="dist">0</div></div>
+  <div class="ro"><div class="k">PROPELLANT</div><div class="v mono" id="prop">0</div></div>
+</div>
+
+<div id="score" class="hud"></div>
+
+<div id="ui">
+  <button id="play">Pause</button>
+  <input type="range" id="scrub" min="0" max="1000" value="0">
+  <label><input type="checkbox" id="free"> free camera</label>
+</div>
+
+<script type="module" src="./scene.js"></script>
+</body>
+</html>

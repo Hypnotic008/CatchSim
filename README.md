@@ -12,9 +12,11 @@ time-warped animation.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest tests -q                  # 73 tests
+python -m pytest tests -q                  # 75 tests
 python run_mission.py --figures            # nominal flight + 2 figures (~40 s)
-python run_mission.py --animate            # figs/catch.mp4 (~6 min to render)
+python run_mission.py --animate            # figs/catch.mp4, 2-D (~6 min to render)
+(cd viz3d && npm install)                  # once: three.js + playwright-core
+python run_mission.py --animate3d          # figs/catch3d.mp4, 3-D (~45 min on 3 cores, software GL)
 python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 cores)
 ```
 
@@ -26,7 +28,9 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 | `landing_detail.png` | landing burn: to-scale side view, top view, descent rate, horizontal speed, tilt vs guidance envelope, throttle |
 | `monte_carlo.png` | footprint, ignition dispersion, margin on every criterion, landing trajectories, propellant, sensitivity |
 | `monte_carlo.csv` | one row per case: every dispersion and every scored value |
-| `catch.mp4` | whole flight, time-warped by phase, camera zooming from 100 km to a to-scale tower close-up |
+| `catch3d.mp4` | **3-D render** of the whole flight: real-time boostback, 12× coast, 3× over the last 8 km, real-time landing burn and catch |
+| `catch3d_viewer.html` | the same scene as a single interactive page: play, pause, scrub, free camera |
+| `catch.mp4` | 2-D version, camera zooming from 100 km to a to-scale tower close-up |
 
 ## Robustness result
 
@@ -128,6 +132,34 @@ diagnosed failure, in this order:
    with what the *actual* thrust vector should produce, and cancels the
    difference. Comparing with the command instead let attitude lag bias a
    calm-air catch by 0.3 m.
+
+## The 3-D animation
+
+`viz3d/` renders the exported flight (`quatsim/export3d.py`) with Three.js
+in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
+
+- **Earth:** a true-radius globe meshed as a polar grid refined around the
+  pad. It is exact at the tower and curves to a real horizon from 100 km,
+  with a procedural Gulf coastline, cumulus field and sun glint, and
+  aerial-perspective haze integrated through an exponential atmosphere. The
+  sky darkens to space with altitude.
+- **Booster:** stainless steel with PBR reflections, weld seams, soot on the
+  lower half and the V3 hot-stage vent ring. It has three lattice grid fins
+  and 33 bells in the webcast layout. Plumes expand into translucent vacuum
+  plumes at altitude and tighten to shock-diamond plumes near the ground.
+  The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 3).
+- **Tower:** lattice tower with chopsticks that close as the booster
+  arrives, launch mount and tank farm.
+- **Cameras:** broadcast-style shots: a chase camera through flip and
+  boostback, a descending long shot over the Gulf, then a long-lens ground
+  tracking camera from the approach to the catch.
+- **HUD:** speed, altitude, engine diagram with a throttle gauge, an
+  attitude sphere, and a mission timeline spaced by video time with a
+  time-warp indicator.
+
+Playback (`export3d.playback_schedule`): flip and boostback 1×, coast 12×,
+the last 8 km before the landing burn 3×, landing burn and catch 1×, with
+eased transitions and a 6 s hold on the caught booster.
 
 ## Guidance, phase by phase
 

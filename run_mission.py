@@ -11,7 +11,8 @@ in PyCharm, or `python run_mission.py` from a terminal with the venv active.
 
 Flags:
     --figures         mission overview + landing detail figures (figs/)
-    --animate         time-warped MP4 of the whole flight (figs/catch.mp4)
+    --animate         time-warped 2-D MP4 of the whole flight (figs/catch.mp4)
+    --animate3d       3-D MP4 (figs/catch3d.mp4) + interactive viewer HTML
     --montecarlo N    N dispersed cases + report (figs/monte_carlo.*)
     --no-steer        fly without grid-fin entry steering, for comparison
 """
@@ -120,6 +121,9 @@ def main(argv=None):
                     help="write figs/mission_overview.png and figs/landing_detail.png")
     ap.add_argument("--animate", action="store_true",
                     help="write figs/catch.mp4 (time-warped, ~1 min)")
+    ap.add_argument("--animate3d", action="store_true",
+                    help="write figs/catch3d.mp4 (3-D, rendered in headless Chromium;\n"
+                         "needs `npm install` in viz3d/) and figs/catch3d_viewer.html")
     ap.add_argument("--montecarlo", type=int, default=0, metavar="N",
                     help="run N dispersed cases and write figs/monte_carlo.png")
     ap.add_argument("--seed", type=int, default=2026)
@@ -136,7 +140,8 @@ def main(argv=None):
     print()
 
     out = fly(T33_BURN, vehicle, aero, sep, bb0, land, seq,
-              log_every=(2 if args.animate else 5), steer=not args.no_steer)
+              log_every=(2 if (args.animate or args.animate3d) else 5),
+              steer=not args.no_steer)
     r = out["r"]
     le = out["landing_events"]
 
@@ -169,6 +174,23 @@ def main(argv=None):
         # MP4 via ffmpeg (PATH, else the imageio-ffmpeg wheel); GIF fallback.
         print(VIS.animate_catch(out, TARGET, path="figs/catch.mp4",
                                 report=rep, progress=print))
+
+    if args.animate3d:
+        import subprocess
+        from quatsim.export3d import build_viewer, export_mission
+        here = os.path.dirname(os.path.abspath(__file__))
+        data = export_mission(out, TARGET, rep,
+                              os.path.join(here, "viz3d", "data", "mission.json"))
+        print(build_viewer(data, "figs/catch3d_viewer.html"))
+        try:
+            import imageio_ffmpeg
+            ff = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            ff = "ffmpeg"
+        subprocess.run(["node", os.path.join(here, "viz3d", "render.mjs"),
+                        "--out", os.path.abspath("figs/catch3d.mp4"),
+                        "--workers", str(args.workers), "--ffmpeg", ff],
+                       check=True)
 
     if args.montecarlo:
         import pickle

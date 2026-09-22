@@ -117,3 +117,42 @@ def test_boostback_predictor_is_continuous_in_cutoff_time():
     d1, d2 = xs[1] - xs[0], xs[2] - xs[1]
     assert d1 < 0 and d2 < 0                          # monotone
     assert abs(d1 - d2) < 0.05 * abs(d1)              # and smooth
+
+
+def test_engine_layout_matches_webcast_diagram():
+    """Centre 3 as an inverted triangle; the 5-engine set is the centre 3
+    plus the two middle-ring engines at 3 and 9 o'clock."""
+    from quatsim.visuals import engine_layout
+    pos, lit = engine_layout()
+    assert pos.shape == (33, 2)
+    c = pos[:3]
+    assert sum(c[:, 1] > 0) == 2 and sum(c[:, 1] < 0) == 1     # two up, one down
+    five = pos[lit[5]]
+    extra = [p for p in five if np.hypot(*p) > 0.4]
+    assert len(extra) == 2
+    for p in extra:
+        assert abs(p[1]) < 1e-9 and abs(abs(p[0]) - 0.6) < 1e-9  # 3 and 9 o'clock
+    assert extra[0][0] * extra[1][0] < 0                         # opposite sides
+    assert lit[3] == [0, 1, 2] and len(lit[13]) == 13 and len(lit[33]) == 33
+
+
+def test_export3d_frame_mapping_and_schedule():
+    from quatsim import quaternion as Q
+    from quatsim.export3d import M_ENU_TO_THREE, Q_M, playback_schedule
+    q = Q.normalize(np.array([0.3, 0.5, -0.2, 0.7]))
+    v = np.array([1.0, 2.0, 3.0])
+    assert np.allclose(Q.rotate(Q.multiply(Q_M, q), v),
+                       M_ENU_TO_THREE @ Q.rotate(q, v))
+    # synthetic mission: boostback, long coast, approach, landing
+    t = np.arange(0.0, 300.0, 0.1)
+    alt = np.where(t < 20, 70e3, np.where(t < 250, 70e3 - (t - 20) * 290,
+                                          np.maximum(4000 - (t - 250) * 150, 105)))
+    seg = np.where(t < 20, "boostback_33", np.where(t < 262, "coast", "landing"))
+    out = {"t": t, "r": np.column_stack([0 * t, 0 * t, alt]), "segment": list(seg),
+           "n_lit": np.where(t < 20, 33, np.where(t < 262, 0, 13)),
+           "throttle": np.where((t < 20) | (t >= 262), 0.8, 0.0)}
+    ft, fr = playback_schedule(out, fps=30, hold=2.0)
+    assert np.all(np.diff(ft) >= -1e-9)
+    assert fr[np.searchsorted(ft, 10.0)] == pytest.approx(1.0, abs=0.05)   # boostback 1x
+    assert fr[np.searchsorted(ft, 120.0)] == pytest.approx(12.0, rel=0.05)  # coast 12x
+    assert fr[np.searchsorted(ft, 280.0)] == pytest.approx(1.0, abs=0.05)  # landing 1x

@@ -727,16 +727,29 @@ def _interp(out, tq):
     return k, r, v, q
 
 
-def _engine_layout():
-    """Raptor positions: centre 3, middle ring 10, outer ring 20. The first
-    3 / 13 / 33 entries are the engines lit on 3 / 13 / 33-engine burns."""
-    inner3 = [(0.55 * np.cos(a), 0.55 * np.sin(a))
-              for a in np.linspace(0, 2 * np.pi, 3, endpoint=False) + np.pi / 2]
-    mid10 = [(1.25 * np.cos(a), 1.25 * np.sin(a))
-             for a in np.linspace(0, 2 * np.pi, 10, endpoint=False)]
-    outer20 = [(2.1 * np.cos(a), 2.1 * np.sin(a))
-               for a in np.linspace(0, 2 * np.pi, 20, endpoint=False)]
-    return np.array(inner3 + mid10 + outer20)
+def engine_layout():
+    """
+    Raptor positions on the Super Heavy aft end, viewed from below, unit
+    radius = outer ring. Matches the SpaceX webcast engine diagram:
+
+      centre 3   inverted triangle (two on top, one at the bottom)
+      middle 10  ring with engines at 3 and 9 o'clock
+      outer 20   ring offset half a slot from the middle ring
+
+    Returns (positions, lit_sets) where lit_sets[n] lists the indices lit on
+    an n-engine burn. The 5-engine burn is the centre 3 plus the two middle
+    ring engines at 3 and 9 o'clock.
+    """
+    inner3 = [(0.26 * np.cos(np.radians(a)), 0.26 * np.sin(np.radians(a)))
+              for a in (150.0, 30.0, 270.0)]
+    mid10 = [(0.60 * np.cos(np.radians(36.0 * k)),
+              0.60 * np.sin(np.radians(36.0 * k))) for k in range(10)]
+    outer20 = [(1.0 * np.cos(np.radians(9.0 + 18.0 * k)),
+                1.0 * np.sin(np.radians(9.0 + 18.0 * k))) for k in range(20)]
+    pos = np.array(inner3 + mid10 + outer20)
+    lit = {0: [], 3: [0, 1, 2], 5: [0, 1, 2, 3, 8],       # mid10[0]=0 deg, [5]=180 deg
+           13: list(range(13)), 33: list(range(33))}
+    return pos, lit
 
 
 def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
@@ -840,7 +853,8 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
     ax_eng.set_aspect("equal"); ax_eng.axis("off")
     ax_eng.set_xlim(-2.6, 2.6); ax_eng.set_ylim(-2.9, 2.6)
     ax_eng.add_patch(mpatches.Circle((0, 0), 2.5, fc="none", ec=AXIS))
-    lay = _engine_layout()
+    lay, order_lit = engine_layout()
+    lay = lay * 2.1
     eng = ax_eng.scatter(lay[:, 0], lay[:, 1], s=90, c=[SURFACE] * 33,
                          edgecolors=MUTED, linewidths=0.8)
     eng_txt = ax_eng.text(0, -2.85, "", ha="center", color=INK2, fontsize=10,
@@ -895,8 +909,6 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
 
     aspect = (0.64 * 16) / 9.0
     lay_n = len(lay)
-    order_lit = {0: [], 3: list(range(3)), 5: list(range(5)),
-                 13: list(range(13)), 33: list(range(33))}
 
     def draw(fi):
         hold = fi >= len(frames_t)
