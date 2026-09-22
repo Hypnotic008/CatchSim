@@ -28,16 +28,25 @@ engine phases:
 
 THE LATERAL LAW
 ---------------
-For a quadratic-in-time acceleration profile with boundary conditions
-r(T) = r_f, v(T) = v_f, a(T) = a_f, the acceleration to apply NOW is
+Both engine phases use a velocity field toward the target point,
+
+    v_des = -e_hat * min( sqrt(2 a_d |e|),  |e| / tau,  a_d (t_go - t_lag) + v_0 )
+    a_lat = k (v_des - v)
+
+-- the lateral twin of the vertical energy matching. The three caps are the
+stopping-distance limit, a linear region near the target, and "the speed must
+be gone before the phase runs out". It has no time-to-go singularity, is
+bounded everywhere, applies to both horizontal axes at once (a planar state
+gives a planar command), and its lean goes to zero as the error does. In the
+final approach a disturbance observer adds the steady wind force it measures.
+
+A quadratic-acceleration (Apollo E-guidance) law is kept as ``poly_accel``:
 
     a0 = a_f - 6 (v_f - v) / T + 12 (r_f - r - v T) / T^2
 
-(the Apollo lunar-descent "E-guidance" family). With a_f = 0 and v_f = 0 this
-is just 12 * ZEM / T^2 + 6 * v / T ... applied to both horizontal axes at
-once. There is no special-casing of the crossrange axis, so the planar
-invariance the old code enforced by hand falls out automatically: a planar
-state produces a planar command.
+It was the first choice here and was replaced. Over a short brake it
+accelerates toward the target first and brakes late, and with T collapsing
+at the gate it demanded 150+ m/s^2 while the attitude loop lagged.
 
 PHASES
 ------
@@ -50,9 +59,9 @@ PHASES
               so 13 engines do the divert and hand over nearly overhead.
     TERMINAL  3 engines. Vertical: constant descent at v_desc, then a
               constant-deceleration flare to v_touch at the catch plane.
-              Lateral: the same polynomial law to the catch point with the
-              time-to-go read off the vertical profile. A tilt envelope that
-              closes with time-to-go keeps the final attitude inside the catch
+              Lateral: the velocity field sized for 3-engine authority, plus
+              the disturbance observer. A tilt envelope that closes a settle
+              time before the catch keeps the final attitude inside the catch
               tolerance even when the lateral law would like more.
 
 WHAT GUIDANCE KNOWS

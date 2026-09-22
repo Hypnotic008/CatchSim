@@ -30,7 +30,25 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 
 ## Robustness result
 
-MONTE_CARLO_RESULT
+**101 of 101 cases caught** (100 dispersed + nominal, seed 42): 95% lower
+confidence bound on the catch rate 96.3% (Wilson). The same seed
+caught 97/101 one iteration earlier, and 1/41 with the original guidance.
+
+![Monte Carlo](figs/monte_carlo.png)
+
+| criterion | limit | median | 95th pct | worst |
+|---|---|---|---|---|
+| lateral error | 1 m | 0.08 m | 0.35 m | 0.73 m |
+| horizontal speed | 0.5 m/s | 0.01 m/s | 0.22 m/s | 0.37 m/s |
+| vertical speed | 1 m/s | 0.51 m/s | 0.62 m/s | 0.67 m/s |
+| tilt | 0.5° | 0.16° | 0.23° | 0.23° |
+| body rate | 1°/s | 0.006°/s | 0.02°/s | 0.10°/s |
+| vertical error | 1 m | 0.01 m | 0.02 m | 0.02 m |
+| fin roll | 10° | 0.05° | 0.30° | 0.42° |
+
+Propellant at catch: 52.0 t minimum, 59.4 t median. The tightest
+margins are lateral error and horizontal speed in the strongest surface
+winds (~12 m/s).
 
 The catch criteria (all must pass, evaluated when the centre of mass reaches
 the 105 m catch altitude): lateral error ≤ 1 m, vertical error ≤ 1 m,
@@ -67,11 +85,12 @@ diagnosed failure, in this order:
    because the aim point had been tuned around the chatter. The predictor
    now steps exactly onto stage boundaries and interpolates the altitude
    crossing. An Illinois-secant solver converges to 2 m in 4–6 shots and
-   also solves the burn heading to null crossrange. It re-solves every 2.5 s
+   also solves the burn heading to null crossrange. It re-solves every 1.5 s
    during the burn (closed loop).
 2. **Thrust dispersion dominated the arrival error** (ρ = −0.94). An
-   IMU-style estimator measures thrust-to-mass during the flip and boostback
-   and feeds the predictor.
+   IMU-style estimator measures thrust-to-mass during the flip and boostback,
+   and tank gauging measures mass flow (an Isp error otherwise cut the burn
+   early and arrived 750 m long). Both feed the predictor.
 3. **No way to steer between boostback and landing.** Drag, density and wind
    errors moved the arrival point by hundreds of metres, and a 13-engine
    landing burn that cannot throttle below ~26 m/s² lasts only ~7 s and can
@@ -79,7 +98,10 @@ diagnosed failure, in this order:
    `quatsim/entry.py` adds grid-fin entry guidance: it predicts the arrival
    point, commands angle of attack within what the fins can hold against
    weathercocking, and uses a day-of-launch wind forecast plus an in-flight
-   drag-scale estimator.
+   drag-scale estimator. Before the air is thick enough to steer, it holds
+   the booster tail-first along the relative wind on RCS. Left alone it
+   entered off-trim and swung ±25°, and with body lift those swings alone
+   moved the arrival by ~1 km.
 4. **The landing guidance was a stack of special cases**: crossrange was only
    ever damped, never steered to the target; the tilt taper was cancelled by
    a 20° floor; and drag was treated as always pointing up.
@@ -100,16 +122,22 @@ diagnosed failure, in this order:
 7. **Tuned from the plots.** The landing-detail figure showed the first
    terminal law catching, but as a 3 s, 0–12° tilt limit cycle. Lower
    lateral gains turned it into one smooth lean-and-return.
+8. **Steady wind at the catch.** The softer gains left a ~0.9 m steady offset
+   in a 12 m/s surface wind (a velocity field needs an error to produce a
+   force). A disturbance observer compares measured horizontal acceleration
+   with what the *actual* thrust vector should produce, and cancels the
+   difference. Comparing with the command instead let attitude lag bias a
+   calm-air catch by 0.3 m.
 
 ## Guidance, phase by phase
 
 | phase | engines | guidance | module |
 |---|---|---|---|
 | flip | 5 → 33 | smooth pure-pitch slew | `mission.py` |
-| boostback | 33 → 13 → 3 | predictive cutoff + heading, re-solved in flight; thrust estimator | `mission.py`, `phases.py` |
-| reorient + coast | 0 | weathercocking; below ~40 km grid-fin entry steering to the aim point | `entry.py` |
+| boostback | 33 → 13 → 3 | predictive cutoff + heading, re-solved in flight; thrust and mass-flow estimators | `mission.py`, `phases.py` |
+| reorient + coast | 0 | RCS hold tail-first to the relative wind; grid-fin entry steering once q > 1.5 kPa; drag estimator | `entry.py`, `phases.py` |
 | landing brake | 13 | energy-matched vertical, velocity-field lateral, 3-D thrust vector | `landing.py` |
-| final approach | 3 | constant descent + flare, velocity-field lateral, closing tilt envelope, roll to catch | `landing.py` |
+| final approach | 3 | constant descent + flare, velocity-field lateral + disturbance observer, closing tilt envelope, roll to catch | `landing.py` |
 
 ## Modelling notes and honest limits
 
