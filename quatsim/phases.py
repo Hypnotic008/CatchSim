@@ -197,6 +197,9 @@ class Segment:
     # LANDING mode: guidance configuration (landing.LandingConfig). None
     # builds a default one aimed at r_target.
     landing: object | None = None
+    # COAST mode: entry-guidance configuration (entry.EntryConfig). None
+    # leaves the coast unsteered.
+    entry: object | None = None
     boostback_steer_crossrange: bool = True
     # Re-solve the cutoff this often during the 33-engine burn, while more
     # than `boostback_resolve_min_remaining` seconds of burn remain.
@@ -426,6 +429,13 @@ class FlightSequencer:
         self._boostback_history = []
         self._landing = None
         self._guid_log = []
+        self._thrust_scale = 1.0
+        self._thrust_scale_n = 0.0
+        self._entry = None
+        self._entry_log = []
+        self._drag_scale = 1.0
+        import copy as _copy
+        self._est_aero = _copy.copy(self.gnc_aero)
         self._bb_q_base = None
         self._bb_yaw = 0.0
         self._landing_n_lit = 0
@@ -520,7 +530,7 @@ class FlightSequencer:
                                  else self._boostback_cutoff_tseg - t_seg)
                         tx = seg.boostback_target_x
                         pred = solve_predictive_remaining_33(
-                            self.gnc_vehicle, self.gnc_aero, s,
+                            self._scaled_gnc_vehicle(), self.gnc_aero, s,
                             self._bb_q_base["boostback_33"],
                             max(seg.duration - t_seg, 0.0),
                             throttle=seg.throttle,
@@ -537,7 +547,8 @@ class FlightSequencer:
                         self._boostback_pred_t = t_seg
                         self._boostback_history.append(
                             (t, pred["remaining_33"], pred["yaw"],
-                             pred["predicted_x"], pred["predicted_y"]))
+                             pred["predicted_x"], pred["predicted_y"],
+                             self._thrust_scale))
                         self._boostback_cutoff_tseg = t_seg + pred["remaining_33"]
                         self._bb_yaw = pred["yaw"]
                         for sg in segments:
@@ -571,7 +582,8 @@ class FlightSequencer:
 
                 # No fins_deployed flag: Super Heavy's grid fins are fixed
                 # structure and never fold, so fin drag is always present.
-                drag = self.aero.drag_force(v, float(r[2]))
+                drag = (self.aero.drag_force(v, float(r[2]))
+                        + self.aero.normal_force(q, v, float(r[2])))
                 v_air = self.aero.air_velocity(v, float(r[2]))
                 # Weathercocking. Applies in EVERY phase, not just the coast:
                 # it is a property of the airframe, not a control mode. This is
@@ -590,7 +602,11 @@ class FlightSequencer:
                                          spherical_gravity=self.spherical_gravity)
 
                 self._t_now = t
+                v_prev = s[D6.V_SLICE].copy()
                 s, _ = D6.rk4_step(t, s, _dt, deriv)
+                self._estimate_thrust(seg, s, v_prev, q, prop, thrust,
+                                      throttle, _dt)
+                self._estimate_drag(s, v_prev, q, prop, thrust, _dt)
                 t += _dt
                 t_seg += _dt
 
@@ -627,7 +643,7 @@ class FlightSequencer:
                     log.n_lit.append(getattr(self, "_landing_n_lit", seg.n_lit)
                                      if seg.mode == Mode.LANDING else
                                      (0 if seg.mode == Mode.COAST else seg.n_lit))
-                    return log.arrays()
+                    return self._finish(log.arrays())
 
         # always log the final state, whatever the sample stride
         log.t.append(t); log.state.append(s.copy())
@@ -643,12 +659,20 @@ class FlightSequencer:
                          and self._landing_n_lit
                          else segments[-1].n_lit)
         log.events.append((t, "sequence complete"))
-        out = log.arrays()
+        return self._finish(log.arrays())
+
+    def _finish(self, out: dict) -> dict:
+        """Attach guidance telemetry to the flight log."""
         out["lat_log"] = list(self._lat_log)
         out["ignition_alt"] = self._ignition_alt
         out["ignition_v"] = self._ignition_v
         out["boostback_history"] = list(self._boostback_history)
         out["guidance_log"] = list(self._guid_log)
+        out["entry_log"] = list(self._entry_log)
+        out["drag_scale_estimate"] = self._drag_scale
+        out["thrust_scale_estimate"] = self._thrust_scale
+        out["entry_predictions"] = ([] if self._entry is None
+                                    else list(self._entry.log))
         lg = self._landing
         out["landing_events"] = ({} if lg is None else {
             "ignition_t": lg.ignition_t, "ignition_alt": lg.ignition_alt,
@@ -658,6 +682,131 @@ class FlightSequencer:
 
     # ------------------------------------------------------------------
 
+    def _estimate_thrust(self, seg, s_new, v_prev, q, prop, thrust, throttle,
+                         dt):
+        """
+        IMU-style estimate of the thrust-to-mass scale factor.
+
+        The boostback predictor needs to know how hard the engines ACTUALLY
+        push. A 3% per-engine thrust dispersion over the remaining burn and
+        the 6 s 13/3-engine tail was the single largest cause of arrival
+        error in the Monte Carlo (correlation -0.94 with ignition downrange,
+        ~1.4 km 1-sigma). The vehicle can measure it: sensed acceleration
+        along the body axis, less the drag estimate, divided by the model's
+        F/m. Measuring the ratio rather than thrust alone also absorbs dry
+        mass and loading errors, which is exactly what the trajectory cares
+        about.
+
+        Estimated only while >= 13 engines burn at high altitude (drag is a
+        negligible, well-modelled correction there). Running average.
+        """
+        if thrust <= 0.0 or seg.n_lit < 13 or s_new[2] < 30_000.0 or dt <= 0:
+            return
+        gv = self.gnc_vehicle
+        m = gv.mass(prop)
+        g = ENV.gravity(s_new[D6.R_SLICE], spherical=self.spherical_gravity)
+        a_sens = (s_new[D6.V_SLICE] - v_prev) / dt - g
+        x_b = Q.rotate(q, np.array([1.0, 0.0, 0.0]))
+        drag = self.gnc_aero.drag_force(v_prev, float(s_new[2])) / m
+        a_model = gv.axial_thrust(seg.n_lit, throttle) / m
+        if a_model <= 0.0:
+            return
+        ratio = float((a_sens - drag) @ x_b) / a_model
+        n = self._thrust_scale_n
+        self._thrust_scale = (self._thrust_scale * n + ratio) / (n + 1.0)
+        self._thrust_scale_n = min(n + 1.0, 400.0)
+
+    def _entry_reference(self, cfg, r, v, q, prop):
+        from .entry import EntryGuidance
+        if self._entry is None:
+            if cfg is None:
+                return None
+            self._entry = EntryGuidance(cfg, self.gnc_vehicle, self._est_aero,
+                                        self.fins)
+        q_ref, info = self._entry.command(r, v, q, prop, self._t_now)
+        if q_ref is not None:
+            self._entry_log.append(dict(info, t=self._t_now,
+                                        alt=float(r[2])))
+        return q_ref
+
+    def _coast_control(self, q, w, q_ref, prop, v, r):
+        """
+        Engines-off attitude control: grid fins for pitch/yaw, RCS for roll
+        and as pitch/yaw backup.
+
+        PD on the quaternion error at an entry bandwidth, plus feed-forward
+        cancelling the (guidance-model) weathercocking moment at the
+        reference attitude -- without it the fins would need a standing
+        attitude error to hold any angle of attack, and the trim would sit
+        short of the command. Fin authority is the GridFinModel's
+        q-dependent maximum; allocation is idealised (torque, not individual
+        fin angles).
+        """
+        from .control import ControlGains
+        h = float(r[2])
+        I = self.vehicle.inertia(prop)
+        ctrl = self.attitude
+        saved = ctrl.gains
+        ctrl.gains = ControlGains(wn=1.0, zeta=0.8)
+        try:
+            tau, _ = ctrl.torque_command(q, w, q_ref, np.zeros(3), I)
+        finally:
+            ctrl.gains = saved
+        v_air = self.gnc_aero.air_velocity(v, h)
+        tau = tau - AERO.restoring_moment(q_ref, v_air, h)
+        speed = float(np.linalg.norm(v_air))
+        q_dyn = ENV.dynamic_pressure(v_air, h)
+        mach = speed / ENV.speed_of_sound(h)
+        fin_max = self.fins.max_torque(mach, q_dyn)
+        rcs = ctrl.roll.max_rcs_pitch_yaw()
+        py_max = fin_max + rcs
+        roll_applied, *_ = ctrl.roll.allocate_roll(self.vehicle,
+                                                   float(tau[0]), 0, 0.0)
+        return np.array([roll_applied,
+                         float(np.clip(tau[1], -py_max, py_max)),
+                         float(np.clip(tau[2], -py_max, py_max))])
+
+    def _estimate_drag(self, s_new, v_prev, q, prop, thrust, dt):
+        """
+        IMU-style estimate of the drag scale (Cd x density) during the
+        unpowered descent.
+
+        With the engines off the only non-gravitational acceleration is
+        aerodynamic, so the deceleration measured along the relative wind,
+        divided by what the guidance model predicts, is a direct estimate of
+        how wrong the model's drag is. Entry and landing guidance then fly on
+        the corrected model (self._est_aero). Filtered with a ~3 s time
+        constant; only updated once dynamic pressure is well above noise.
+        """
+        if thrust > 0.0 or dt <= 0.0:
+            return
+        h = float(s_new[2])
+        ga = self.gnc_aero
+        v_air = ga.air_velocity(v_prev, h)
+        sp = float(np.linalg.norm(v_air))
+        if sp < 50.0 or ENV.dynamic_pressure(v_air, h) < 2_000.0:
+            return
+        m = self.gnc_vehicle.mass(prop)
+        g = ENV.gravity(s_new[D6.R_SLICE], spherical=self.spherical_gravity)
+        a_sens = (s_new[D6.V_SLICE] - v_prev) / dt - g
+        u = -v_air / sp
+        model = float(ga.drag_force(v_prev, h) @ u) / m
+        if model <= 1e-3:
+            return
+        ratio = float(a_sens @ u) / model
+        k = self._drag_scale
+        k += (ratio - k) * min(dt / 3.0, 1.0)
+        self._drag_scale = float(np.clip(k, 0.6, 1.6))
+        self._est_aero.cd_scale = ga.cd_scale * self._drag_scale
+
+    def _scaled_gnc_vehicle(self):
+        """Guidance vehicle with thrust scaled by the in-flight estimate."""
+        import copy as _copy
+        v = _copy.copy(self.gnc_vehicle)
+        v.thrust_per_engine = self.gnc_vehicle.thrust_per_engine * float(
+            np.clip(self._thrust_scale, 0.8, 1.2))
+        return v
+
     def _actuate(self, seg: Segment, s: np.ndarray, t_seg: float,
                  r_seg_start: np.ndarray):
         """Run the controller for this segment and return the actuator state."""
@@ -665,10 +814,14 @@ class FlightSequencer:
         veh = self.vehicle
 
         if seg.mode == Mode.COAST or seg.n_lit == 0:
-            # No lit engines means no gimbal authority whatsoever. Grid fins
-            # are the only actuator here and the fin control loop is not built
-            # yet, so the vehicle is genuinely uncontrolled through this
-            # segment. That is a real gap, not a modelling convenience.
+            # No lit engines: no gimbal. With an entry-guidance config the
+            # grid fins (plus RCS) steer the descent -- see entry.py. Without
+            # one the vehicle is left to weathercock, as before.
+            if seg.entry is not None and self.fins is not None:
+                q_ref = self._entry_reference(seg.entry, r, v, q, prop)
+                if q_ref is not None:
+                    tau = self._coast_control(q, w, q_ref, prop, v, r)
+                    return 0.0, tau, 0.0, 0.0, 0.0, r.copy(), q_ref
             return 0.0, np.zeros(3), 0.0, 0.0, 0.0, r.copy(), q.copy()
 
         if seg.mode == Mode.LANDING:
@@ -679,7 +832,7 @@ class FlightSequencer:
                             if seg.r_target is not None
                             else np.array([0.0, 0.0, seg.catch_altitude])))
                 self._landing = LandingGuidance(cfg, self.gnc_vehicle,
-                                                self.gnc_aero)
+                                                self._est_aero)
             lg = self._landing
             cmd = lg.step(r, v, q, prop, self._t_now)
             self._ignited = cmd.phase != "coast"
@@ -690,6 +843,11 @@ class FlightSequencer:
                 self._segment_done = True
             q_cmd = attitude_from_pointing(cmd.direction,
                                            roll_reference=cmd.roll_ref)
+            if cmd.phase == "coast" and self._entry is not None:
+                q_ref = self._entry_reference(None, r, v, q, prop)
+                if q_ref is not None:
+                    tau = self._coast_control(q, w, q_ref, prop, v, r)
+                    return 0.0, tau, 0.0, 0.0, 0.0, r.copy(), q_ref
             if cmd.phase in ("coast", "done"):
                 ao = self.attitude.update(q, w, q_cmd, np.zeros(3), prop,
                                           0, 0.0)

@@ -126,6 +126,39 @@ class AeroModel:
                  * speed * speed)
         return -(q_dyn * cd * self.reference_area) * (v / speed)
 
+    # Body normal-force slope, per radian, on the base reference area.
+    # ESTIMATE: slender-body theory gives ~2 for the body alone; grid fins
+    # and chines add to it. This is what makes aerodynamic steering during
+    # entry possible, and it is dispersed in the Monte Carlo.
+    cn_alpha: float = 2.0
+
+    def normal_force(self, q: np.ndarray, velocity: np.ndarray,
+                     altitude: float) -> np.ndarray:
+        """
+        Body normal force (the 'lift' of a cylinder at angle of attack), N,
+        inertial frame.
+
+        Crossflow form: the component of the air-relative velocity normal to
+        the body axis, v_perp, produces a force opposing it,
+
+            F = -q_dyn * S_ref * cn_alpha * v_perp / |v|
+
+        so its magnitude grows as sin(alpha) and it vanishes when the body is
+        aligned with the flow either way round. It was absent from the
+        original model, which left the booster no way to steer between
+        boostback cutoff and landing-burn ignition. With it, tilting the body
+        a few degrees off the relative wind moves the arrival point by
+        hundreds of metres -- which is what the grid fins are for.
+        """
+        v = self.air_velocity(velocity, altitude)
+        speed = float(np.linalg.norm(v))
+        if speed < 1.0 or self.cn_alpha == 0.0:
+            return np.zeros(3)
+        a = Q.rotate(q, np.array([1.0, 0.0, 0.0]))
+        v_perp = v - float(v @ a) * a
+        q_dyn = 0.5 * ENV.density(altitude) * self.density_scale * speed * speed
+        return -(q_dyn * self.reference_area * self.cn_alpha / speed) * v_perp
+
     def terminal_velocity(self, mass: float, altitude: float = 0.0) -> float:
         """
         Steady-state descent speed where drag balances weight.

@@ -16,11 +16,11 @@ This module replaces it with a single, standard construction used in both
 engine phases:
 
   1. A VERTICAL reference that defines the time-to-go.
-  2. A LATERAL polynomial-guidance law that drives position, velocity AND
-     acceleration to their targets at that time-to-go. Constraining the final
-     acceleration to zero means the commanded lean is zero at the catch --
-     the vehicle arrives upright by construction instead of by a taper that
-     fights the lateral law.
+  2. A LATERAL velocity-field law: the allowed approach speed toward the
+     target is min(sqrt(2 a d), d / tau, a (t_go - t_settle)), tracked with
+     a gain. It is bounded everywhere (no 1/t_go^2 singularity), stops the
+     vehicle before the final settle window, and its lean goes to zero with
+     the error -- so the vehicle arrives upright because it arrives converged.
   3. A THRUST-VECTOR solve in 3-D: required specific force =
      desired acceleration - gravity - (estimated drag)/m. Its direction is the
      attitude command, its magnitude the throttle. Tilt and throttle limits
@@ -45,8 +45,9 @@ PHASES
               Ignition is tested every step (energy test, below).
     BRAKE     13 engines. Vertical: energy matching to the GATE state
               (h_gate, v_gate), recomputed every step from the actual state,
-              so throttle is an output rather than a schedule. Lateral: the
-              polynomial law to the gate point directly above the tower.
+              so throttle is an output rather than a schedule. Lateral: a
+              velocity-field braking law toward the point above the tower,
+              so 13 engines do the divert and hand over nearly overhead.
     TERMINAL  3 engines. Vertical: constant descent at v_desc, then a
               constant-deceleration flare to v_touch at the catch plane.
               Lateral: the same polynomial law to the catch point with the
@@ -120,6 +121,18 @@ class LandingConfig:
     # scale as 1/T^2; flooring T keeps them finite, and the envelope above
     # keeps the resulting lean small.
     t_go_floor: float = 2.5
+    settle_time: float = 3.0              # s of near-upright flight at the end
+    # Terminal lateral velocity field (see the brake equivalents).
+    term_lat_frac: float = 0.5
+    term_lat_tau: float = 3.5
+    term_lat_gain: float = 0.8
+    # Brake lateral velocity field: design deceleration as a fraction of the
+    # tilt-limited lateral authority, near-target time constant, and gain.
+    brake_lat_frac: float = 0.35
+    brake_lat_tau: float = 3.0
+    brake_lat_gain: float = 0.9
+    brake_lat_lag: float = 1.0            # s, attitude-loop allowance
+    v_lat_handover: float = 2.0           # m/s allowed at the handover
 
     # --- roll ------------------------------------------------------------
     # Body z (third grid fin) must point away from the tower at the catch.
@@ -215,7 +228,10 @@ class LandingGuidance:
         h = float(r[2])
         vz = float(v[2])
         m = self.vehicle.mass(prop)
-        drag = self.aero.drag_force(v, h)            # guidance's ESTIMATE
+        # Guidance's ESTIMATE of the aerodynamic force: axial drag plus the
+        # body normal force at the current attitude (large during the brake,
+        # when the vehicle leans up to 30 deg off a 300 m/s relative wind).
+        drag = self.aero.drag_force(v, h) + self.aero.normal_force(q, v, h)
         g_vec = np.array([0.0, 0.0, -ENV.G0])
         tgt = np.asarray(c.target, float)
         h_left = h - tgt[2]
@@ -264,29 +280,74 @@ class LandingGuidance:
             dh = max(h - c.gate_altitude, 1.0)
             # Energy matching to the gate, recomputed from the actual state.
             a_z = max((vz * vz - c.v_gate ** 2) / (2.0 * dh), 0.0)
-            t_brake = 2.0 * dh / max(abs(vz) + c.v_gate, 1.0)
-            # ONE lateral plan to the catch point for the whole remaining
-            # descent: time-to-go is the brake plus the terminal profile from
-            # the gate. Planning to the gate alone made T collapse to ~1 s
-            # near the handover, the 12/T^2 gain exploded, and the vehicle
-            # arrived at the handover leaning 29 deg and 77 m past the tower.
-            _, t_term, _ = self._terminal_profile(c.gate_altitude - tgt[2])
-            t_go = max(t_brake + t_term, c.t_go_floor)
-            a_xy = poly_accel(r[:2], v[:2], tgt[:2], np.zeros(2), np.zeros(2),
-                              t_go)
+            t_go = 2.0 * dh / max(abs(vz) + c.v_gate, 1.0)
+            # LATERAL: velocity-field braking law, no time-to-go.
+            #
+            #   v_des = -e_hat * min( sqrt(2 a_d |e|), |e| / tau )
+            #   a     = k (v_des - v)
+            #
+            # The quadratic plan used in the terminal phase is the wrong shape
+            # here: over a ~7 s brake it first ACCELERATES toward the target
+            # and brakes hard at the end, and with its time-to-go collapsing
+            # at the gate it demanded 150+ m/s^2 while the attitude loop was
+            # still catching up. A velocity field is the lateral twin of the
+            # vertical energy matching: it asks "how fast may I approach from
+            # here?", is bounded everywhere, and hands over nearly overhead
+            # and slow regardless of where the burn started.
+            f_z_est = a_z + ENV.G0 - float(drag[2]) / m
+            a_d = c.brake_lat_frac * max(f_z_est, ENV.G0) * np.tan(
+                c.max_tilt_brake)
+            e = r[:2] - tgt[:2]
+            d = float(np.linalg.norm(e))
+            if d > 1e-6:
+                # Third cap: the speed the brake can still remove before the
+                # handover. Without it the field (sized for 13-engine
+                # authority) allowed 67 m/s at 250 m, and the vehicle crossed
+                # the tower at 71 m/s into a 3-engine phase with ~2 m/s^2 of
+                # lateral authority.
+                sp = min(np.sqrt(2.0 * a_d * d), d / c.brake_lat_tau,
+                         a_d * max(t_go - c.brake_lat_lag, 0.0)
+                         + c.v_lat_handover)
+                v_des = -e / d * sp
+            else:
+                v_des = np.zeros(2)
+            a_xy = c.brake_lat_gain * (v_des - v[:2])
             max_tilt = c.max_tilt_brake
             floor = c.throttle_floor
         else:
             v_ref, t_go_v, in_flare = self._terminal_profile(h_left)
-            # Feed-forward is the profile's own deceleration in the flare.
-            a_ff = c.a_flare if in_flare else 0.0
+            # Feed-forward is the profile's own deceleration along the
+            # ACTUAL descent: d(v_ref)/dt = a_flare * |vz| / v_ref. A constant
+            # a_flare here held a stopped vehicle 0.1 m above the catch plane
+            # (a_z = a_flare - k_v * v_ref > 0 at vz = 0) until the tanks ran
+            # dry.
+            a_ff = (c.a_flare * float(np.clip(-vz / max(v_ref, 1e-3), 0.0,
+                                              1.5))
+                    if in_flare else 0.0)
             a_z = a_ff + c.k_v * ((-v_ref) - vz)
             t_go = max(t_go_v, c.t_go_floor)
-            a_xy = poly_accel(r[:2], v[:2], tgt[:2], np.zeros(2),
-                              np.zeros(2), t_go)
+            # Same velocity-field law as the brake, sized for 3-engine
+            # authority and capped so the approach speed is gone before the
+            # final settle window. (The quadratic E-guidance plan, kept as
+            # poly_accel, accelerates first and brakes late; with a closing
+            # tilt envelope it overshot a 400 m handover error by 50 m.)
+            f_z_est = a_z + ENV.G0
+            a_d = c.term_lat_frac * f_z_est * np.tan(c.max_tilt_terminal)
+            e = r[:2] - tgt[:2]
+            d = float(np.linalg.norm(e))
+            if d > 1e-6:
+                sp = min(np.sqrt(2.0 * a_d * d), d / c.term_lat_tau,
+                         a_d * max(t_go_v - c.settle_time, 0.0))
+                v_des = -e / d * sp
+            else:
+                v_des = np.zeros(2)
+            a_xy = c.term_lat_gain * (v_des - v[:2])
+            # Envelope closes `settle_time` before the catch so the attitude
+            # loop has time to null the last of the lean and its rate.
             max_tilt = min(c.max_tilt_terminal,
                            max(c.tilt_envelope_floor,
-                               c.tilt_envelope_rate * t_go_v))
+                               c.tilt_envelope_rate
+                               * (t_go_v - c.settle_time)))
             floor = c.terminal_throttle_floor
 
         a_des = np.array([a_xy[0], a_xy[1], a_z])

@@ -28,6 +28,7 @@ from quatsim.aero import AeroModel, GridFinModel
 from quatsim.control import AttitudeController, ControlGains
 from quatsim.mission import (SeparationState, build_mission, mission_report,
                              propagate_flip, solve_boostback)
+from quatsim.entry import EntryConfig
 from quatsim.landing import LandingConfig
 from quatsim.phases import FlightSequencer, catch_report, solve_ignition_altitude
 from quatsim.position import PositionController, PositionGains
@@ -81,7 +82,7 @@ def landing_config() -> LandingConfig:
 
 
 def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
-        aim_x=AIM_X_1200, landing=None):
+        aim_x=AIM_X_1200, landing=None, steer=True):
     bb = dict(bb0)
     bb["duration"] = t33 + 6.0
     segs = build_mission(vehicle, aero, sep, bb, land, TARGET, np.zeros(3),
@@ -100,6 +101,9 @@ def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
             # Predictive mode owns the cutoff; this is only a safe maximum
             # window, not a commanded burn duration.
             s.duration = 14.0
+        if s.name == "coast" and steer:
+            s.entry = EntryConfig(aim=np.array([aim_x, float(TARGET[1])]),
+                                  aim_altitude=1200.0)
         if s.name == "landing":
             s.landing = landing if landing is not None else landing_config()
             s.r_target = TARGET
