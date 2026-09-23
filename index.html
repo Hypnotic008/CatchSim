@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dalen Wagga — Aerospace Engineering</title>
+<meta name="description" content="Aerospace engineering student at UAH and CFD intern at McLaurin Aerospace. Projects in guidance and control, CFD and propulsion.">
+<meta property="og:title" content="Dalen Wagga — Aerospace Engineering">
+<meta property="og:description" content="Aerospace engineering student at UAH and CFD intern at McLaurin Aerospace. Projects in guidance and control, CFD and propulsion.">
+<meta property="og:image" content="projects/catchsim/assets/images/mission_overview.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="topnav">
+    <a class="brand" href="./">Dalen Wagga</a>
+    <ul>
+      <li><a href="#projects">Projects</a></li>
+      <li><a href="#experience">Experience</a></li>
+      <li><a href="#education">Education</a></li>
+      <li><a href="assets/resume/Dalen_Wagga_Resume.pdf" target="_blank" rel="noopener">Resume</a></li>
+    </ul>
+  </nav>
+
+  <header>
+    <div class="eyebrow">Aerospace Engineering · Huntsville, AL</div>
+    <h1>Dalen Wagga</h1>
+    <p class="lede">Aerospace engineering student at the University of Alabama in Huntsville and CFD intern at McLaurin Aerospace. I build simulations and run analyses on launch vehicle problems: booster guidance and control, supersonic aerodynamics and ground-system flow.</p>
+    <div class="btns">
+      <a class="btn primary" href="#projects">See projects</a>
+      <a class="btn" href="assets/resume/Dalen_Wagga_Resume.pdf" target="_blank" rel="noopener">Resume (PDF)</a>
+      <a class="btn" href="https://github.com/Hypnotic8008" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn" href="https://linkedin.com/in/dalen-wagga" target="_blank" rel="noopener">LinkedIn</a>
+    </div>
+  </header>
+
+  <section id="projects">
+    <h2>Projects</h2>
+    <div class="cards">
+      <a class="card" href="projects/catchsim/">
+        <img src="projects/catchsim/assets/images/mission_overview.png" alt="CatchSim mission overview: trajectory and time histories" loading="lazy">
+        <div class="body">
+          <div class="eyebrow">Guidance &amp; Control</div>
+          <h3>Super Heavy Booster Catch Simulation</h3>
+          <p>A 6-DOF quaternion sim of a Super Heavy V3 booster from hot-stage separation to the tower catch. 101 of 101 Monte Carlo cases caught, up from 1 of 41 with the baseline guidance.</p>
+          <div class="meta">Python · Monte Carlo · Three.js</div>
+          <span class="more">View project &rarr;</span>
+        </div>
+      </a>
+      <a class="card" href="projects/water-deluge/">
+        <img src="projects/water-deluge/assets/images/deluge-plate-cad.png" alt="Deluge plate CAD model with angled orifices" loading="lazy">
+        <div class="body">
+          <div class="eyebrow">CFD · Ground Systems</div>
+          <h3>Water Deluge System</h3>
+          <p>A small-scale water deluge system modeled on the Starship flame deflector: a stainless plate with ~100 angled orifices, two Ansys meshing approaches and a costed test BOM.</p>
+          <div class="meta">Inventor · Ansys Meshing · Fluent</div>
+          <span class="more">View project &rarr;</span>
+        </div>
+      </a>
+      <a class="card" href="projects/forward-flap/">
+        <img src="projects/forward-flap/assets/images/pathlines-dynamic-pressure.png" alt="Pathlines colored by dynamic pressure over the forward flap" loading="lazy">
+        <div class="body">
+          <div class="eyebrow">CFD · FSI</div>
+          <h3>Starship Forward Flap: CFD &amp; FSI</h3>
+          <p>Supersonic k-ω SST CFD on a Starship forward flap, with flow speeds up to ~1,520 m/s and dynamic pressure near 1.4 MPa. Mach 2, 25° AoA pressure loads are mapped onto a structural model.</p>
+          <div class="meta">Fluent · CFD-Post · Static Structural</div>
+          <span class="more">View project &rarr;</span>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <section id="experience">
+    <h2>Experience</h2>
+    <div class="entry">
+      <div class="head"><h3>Computational Fluid Dynamics Intern</h3><span class="when">May 2026 – Present</span></div>
+      <div class="org">McLaurin Aerospace · Huntsville, AL</div>
+      <ul>
+        <li>Run Cart3D CFD on AIM-120 missile geometries across angle-of-attack and roll-angle sweeps to characterize aerodynamic performance.</li>
+        <li>Built Python pipelines that automate batch runs and post-processing: forces and moments (Fx–Mz), static margin and minimum turn radius.</li>
+        <li>Run viscous CFD in Loci/CHEM through the full mesh-to-post-processing pipeline (AFLR3, gridmerge), tuning wall spacing for y+ &lt; 1.</li>
+        <li>Resolved HPC cluster and coordinate-transform issues (PBS/qsub submission, aeroballistic coordinate conversions) to keep the pipeline reliable.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="head"><h3>Tartarus Liquid Engine, Propulsion Sub-Team</h3><span class="when">Jan 2026 – Present</span></div>
+      <div class="org">Space Hardware Club, UAH</div>
+      <ul>
+        <li>Modeled liquid-kerosene combustion for a gaseous-only CFD tool by deriving temperature differences from the latent heat of vaporization, filling a gap in the available literature.</li>
+        <li>Completed preliminary CAD for the Epimetheus injector, an upgrade over the team's Prometheus engine, using advanced surface and manifold modeling.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="head"><h3>Rocketry Two Month, Mechanical Sub-Team</h3><span class="when">Aug 2025 – Nov 2025</span></div>
+      <div class="org">Space Hardware Club, UAH</div>
+      <ul>
+        <li>Designed a coupler bulkhead and a removable, screw-in black-powder charge well (Inventor/Fusion) for an L2-class airbrake rocket, on an 11-person team with a two-month design-to-manufacture timeline.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="education">
+    <h2>Education</h2>
+    <div class="entry">
+      <div class="head"><h3>B.S. Aerospace Engineering</h3><span class="when">Expected May 2029</span></div>
+      <div class="org">University of Alabama in Huntsville · GPA 3.4 · Sophomore standing</div>
+      <p class="muted" style="margin:0">Coursework: Differential Equations, Statics, Principles of Aero/Astro, Numerical Methods, Engineering Economy, Calculus 2/3, Linear Algebra, Physics 1.</p>
+    </div>
+    <p class="muted">Activities: Space Hardware Club (Mechanical &amp; Propulsion Sub-Teams), Alpha Tau Omega, Sand Volleyball Club.</p>
+  </section>
+
+  <section id="skills">
+    <h2>Tools</h2>
+    <ul class="tags" style="margin-top:0">
+      <li>Python</li><li>NumPy / SciPy</li><li>Ansys Fluent</li><li>Ansys Meshing</li><li>CFD-Post</li><li>Ansys Static Structural</li>
+      <li>Cart3D</li><li>Loci/CHEM</li><li>AFLR3</li><li>HPC / PBS</li><li>Autodesk Inventor</li><li>Fusion 360</li><li>Three.js</li>
+    </ul>
+  </section>
+
+  <footer id="contact">
+    <p><a href="mailto:otto.dalen@gmail.com">otto.dalen@gmail.com</a> · <a href="https://linkedin.com/in/dalen-wagga" target="_blank" rel="noopener">LinkedIn</a> · <a href="https://github.com/Hypnotic8008" target="_blank" rel="noopener">GitHub</a> · <a href="assets/resume/Dalen_Wagga_Resume.pdf" target="_blank" rel="noopener">Resume</a></p>
+  </footer>
+</div>
+</body>
+</html>

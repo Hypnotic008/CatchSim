@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starship Forward Flap CFD — Dalen Wagga</title>
+<meta name="description" content="Supersonic CFD of a Starship forward flap in Ansys Fluent (k-ω SST), with Mach 2, 25° AoA pressure loads mapped onto a structural model in a one-way FSI workflow.">
+<meta property="og:title" content="Starship Forward Flap: CFD &amp; FSI — Dalen Wagga">
+<meta property="og:image" content="assets/images/pathlines-dynamic-pressure.png">
+<link rel="stylesheet" href="../../assets/css/site.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="topnav"><a class="back" href="../../">&larr; Back to portfolio</a></nav>
+
+  <header>
+    <div class="eyebrow">CFD · Fluid-Structure Interaction</div>
+    <h1>Starship Forward Flap: CFD &amp; FSI</h1>
+    <p class="lede">I modeled a Starship forward flap in Inventor and ran supersonic CFD on it in Ansys Fluent with the k-ω SST turbulence model. Then I mapped the Mach 2, 25° angle-of-attack pressure loads onto an Ansys Static Structural model in a one-way FSI workflow.</p>
+    <ul class="tags">
+      <li>Autodesk Inventor</li><li>Ansys Fluent</li><li>k-ω SST</li><li>CFD-Post</li><li>Static Structural</li><li>One-way FSI</li>
+    </ul>
+  </header>
+
+  <section>
+    <div class="stats">
+      <div class="stat"><b>~1,520 m/s</b><span>peak velocity, at the leading edge</span></div>
+      <div class="stat"><b>~1.4 MPa</b><span>peak dynamic pressure</span></div>
+      <div class="stat"><b>Mach 2, 25°</b><span>load case mapped to structure</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Geometry</h2>
+    <figure>
+      <img src="assets/images/flap-cad.png" width="1003" height="809" alt="Forward flap CAD model in Inventor" style="max-width:640px">
+      <figcaption>Forward flap planform modeled in Autodesk Inventor.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Flow field</h2>
+    <p class="muted">Post-processed in CFD-Post with velocity contours, surface streamlines and pathlines. The results show strong acceleration at the leading edge and separated flow over the flap's upper surface.</p>
+    <figure>
+      <img src="assets/images/pathlines-dynamic-pressure.png" width="1307" height="658" loading="lazy" alt="Pathlines colored by dynamic pressure, peaking along the leading edge">
+      <figcaption>Pathlines colored by dynamic pressure. The peak, near 1.37 MPa, runs along the leading edge.</figcaption>
+    </figure>
+    <div class="grid2">
+      <figure>
+        <img src="assets/images/velocity-contour.png" width="1242" height="885" loading="lazy" alt="Velocity contour on the flap surface">
+        <figcaption>Surface velocity contour: ~1,520 m/s at the leading edge, and a low-speed region downstream.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/surface-streamlines.png" width="1743" height="810" loading="lazy" alt="Surface streamlines curling at the edge of the flap">
+        <figcaption>Surface streamlines, with flow curling off the edge into the separated region.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pressure vs. velocity</h2>
+    <figure>
+      <img src="assets/images/pressure-vs-velocity.png" width="1234" height="876" loading="lazy" alt="Scatter of pressure against velocity across the flow field">
+      <figcaption>Pressure against velocity across the flow field. Pressure falls as speed rises, and the points split into two distinct bands.</figcaption>
+    </figure>
+  </section>
+
+  <footer><a class="back" href="../../">&larr; Back to portfolio</a></footer>
+</div>
+</body>
+</html>

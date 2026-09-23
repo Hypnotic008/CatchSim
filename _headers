@@ -1,13 +1,17 @@
-# Merge into the _headers file at your Netlify publish root.
+# Netlify response headers. This file must sit at the publish root.
 # Explicit types and range support so browsers stream and seek the video
 # instead of downloading it as an unknown file.
-/projects/catchsim/assets/videos/*
+/*.mp4
   Content-Type: video/mp4
   Accept-Ranges: bytes
-  Cache-Control: public, max-age=31536000
+  Cache-Control: public, max-age=604800
 
-/projects/catchsim/assets/images/*
-  Cache-Control: public, max-age=31536000
+/*.png
+  Cache-Control: public, max-age=604800
 
-/projects/catchsim/assets/data/*
+/*.pdf
+  Content-Type: application/pdf
+  Content-Disposition: inline; filename="Dalen_Wagga_Resume.pdf"
+
+/*.csv
   Content-Type: text/csv; charset=utf-8
