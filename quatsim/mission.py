@@ -625,7 +625,14 @@ def build_mission(
                            np.zeros(3), boostback.get("prop_after", 0.0))
         _, v_ei, _, _ = _propagate_ballistic(vehicle, aero, bo, 55_000.0,
                                              dt=0.1)
-    q_entry = attitude_from_pointing(-np.asarray(v_ei, float))
+    # ROLL: the middle grid fin (body +z) is the rudder and trails on the
+    # downrange side, pointing +x -- away from the tower. Set it here, in the
+    # unhurried vacuum reorient, so the roll is already the catch roll and
+    # stays locked through entry and the landing burn. (The default 'up' roll
+    # reference put the rudder on the tower side, and the booster then had to
+    # roll 180 deg during the final approach.)
+    q_entry = attitude_from_pointing(-np.asarray(v_ei, float),
+                                     roll_reference=np.array([1.0, 0.0, 0.0]))
     reorient_seg = Segment("reorient", Mode.COAST, n_lit=0, n_gimballing=0,
                            duration=reorient_duration)
     reorient_seg.q_slew = Slew(q_retro, q_entry, 0.0, reorient_duration,

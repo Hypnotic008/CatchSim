@@ -10,7 +10,7 @@ python -m pytest tests -q          # expect 73 passed
 
 python run_mission.py                      # fly the nominal mission, print the catch report
 python run_mission.py --figures            # + figs/mission_overview.png, figs/landing_detail.png
-python run_mission.py --animate            # + figs/catch.mp4 (time-warped, ~1 min of video)
+python run_mission.py --animate3d          # + figs/catch3d.mp4 and figs/catch3d_viewer.html (needs `cd viz3d && npm install`)
 python run_mission.py --montecarlo 100     # + figs/monte_carlo.{png,csv,pkl}
 python run_mission.py --no-steer           # fly without grid-fin entry steering, for comparison
 ```

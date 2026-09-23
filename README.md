@@ -14,7 +14,6 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m pytest tests -q                  # 75 tests
 python run_mission.py --figures            # nominal flight + 2 figures (~40 s)
-python run_mission.py --animate            # figs/catch.mp4, 2-D (~6 min to render)
 (cd viz3d && npm install)                  # once: three.js + playwright-core
 python run_mission.py --animate3d          # figs/catch3d.mp4, 3-D (~45 min on 3 cores, software GL)
 python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 cores)
@@ -30,7 +29,6 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 | `monte_carlo.csv` | one row per case: every dispersion and every scored value |
 | `catch3d.mp4` | **3-D render** of the whole flight: real-time boostback, 12× coast, 3× over the last 8 km, real-time landing burn and catch |
 | `catch3d_viewer.html` | the same scene as a single interactive page: play, pause, scrub, free camera |
-| `catch.mp4` | 2-D version, camera zooming from 100 km to a to-scale tower close-up |
 
 ## Robustness result
 
@@ -43,19 +41,18 @@ caught 1/41 under the same dispersions.
 
 | criterion | limit | median | 95th pct | worst |
 |---|---|---|---|---|
-| lateral error | 1 m | 0.09 m | 0.35 m | 0.73 m |
-| horizontal speed | 0.5 m/s | 0.02 m/s | 0.22 m/s | 0.40 m/s |
+| lateral error | 1 m | 0.08 m | 0.36 m | 0.74 m |
+| horizontal speed | 0.5 m/s | 0.01 m/s | 0.22 m/s | 0.39 m/s |
 | vertical speed | 1 m/s | 0.51 m/s | 0.62 m/s | 0.67 m/s |
-| tilt | 0.5° | 0.16 ° | 0.23 ° | 0.23 ° |
-| body rate | 1°/s | 0.044 °/s | 0.307 °/s | 0.536 °/s |
+| tilt | 0.5° | 0.15 ° | 0.23 ° | 0.23 ° |
+| body rate | 1°/s | 0.006 °/s | 0.018 °/s | 0.094 °/s |
 | vertical error | 1 m | 0.01 m | 0.02 m | 0.02 m |
-| fin roll | 10° | 0.10 ° | 0.97 ° | 1.36 ° |
+| fin roll | 10° | 0.00 ° | 0.00 ° | 0.00 ° |
 
 Propellant at catch: 51.9 t minimum, 59.4 t median. The tightest
 margins are lateral error and horizontal speed in the strongest surface
-winds (~12 m/s). The controlled coast reorient changed the roll state the
-booster arrives with, so the worst body rate (0.54°/s) and fin roll (1.4°)
-at the catch are higher than before that change, still well inside limits.
+winds (~12 m/s). With the roll locked from the coast onward, fin roll and body rate at
+the catch are essentially zero.
 
 The catch criteria (all must pass, evaluated when the centre of mass reaches
 the 105 m catch altitude): lateral error ≤ 1 m, vertical error ≤ 1 m,
@@ -142,6 +139,13 @@ diagnosed failure, in this order:
    slew to engines-first along the velocity predicted at entry interface,
    held until the air thickens (peak rate 1.5°/s, then ~0 through the
    coast).
+10. **The booster rolled 180° during the final approach.** The middle grid fin
+    is the rudder and belongs on the downrange side (+x, away from the
+    tower), but the reorient's default roll reference put it on the tower
+    side. The reorient now sets the catch roll in vacuum, entry guidance holds
+    it, and the landing burn locks it. Roll rate through the burn is ~0, and
+    the terminal roll manoeuvre is only a fallback for a vehicle that arrives
+    more than 35° off-roll.
 
 ## The 3-D animation
 

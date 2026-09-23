@@ -152,6 +152,7 @@ class LandingConfig:
     catch_roll_axis: np.ndarray = field(
         default_factory=lambda: np.array([1.0, 0.0, 0.0]))
     roll_rate: float = np.radians(12.0)   # mean roll rate budget
+    roll_lock_window: float = np.radians(35.0)
     roll_min_duration: float = 6.0        # s
 
 
@@ -467,6 +468,17 @@ class LandingGuidance:
         """
         c = self.cfg
         keep = self._roll_keep(q, direction)
+        want = np.asarray(c.catch_roll_axis, float)
+        want = want - float(want @ direction) * direction
+        nw = float(np.linalg.norm(want))
+        # ROLL LOCK: the coast already delivers the catch roll (rudder fin
+        # +x), so hold it for the whole burn instead of rolling late. Only a
+        # vehicle that arrives off-roll (by more than roll_lock_window) falls
+        # back to keep-then-roll in the final approach.
+        if nw > 1e-6:
+            want /= nw
+            if float(keep @ want) > np.cos(c.roll_lock_window):
+                return want
         if self.phase != TERMINAL:
             return keep
         want = np.asarray(c.catch_roll_axis, float)

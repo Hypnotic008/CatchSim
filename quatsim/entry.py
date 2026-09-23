@@ -37,7 +37,7 @@ The attitude reference is flown by the grid fins plus RCS; see
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -58,6 +58,9 @@ class EntryConfig:
     fin_margin: float = 0.8               # fraction of fin torque to plan on
     period: float = 0.5                   # s between predictions
     t_go_floor: float = 4.0
+    # Roll: body +z (the middle, 'rudder' grid fin) is held toward this
+    # inertial direction -- +x, away from the tower -- all the way down.
+    roll_axis: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0]))
 
 
 class EntryGuidance:
@@ -122,7 +125,7 @@ class EntryGuidance:
         q_dyn = 0.5 * ENV.density(r[2]) * speed * speed
         m = self.vehicle.mass(prop)
         v_hat = v_air / speed
-        z_now = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
+        z_now = np.asarray(c.roll_axis, float)          # roll locked, rudder +x
         if q_dyn < c.q_min:
             # Too thin to steer, but not too thin to matter. Hold the attitude
             # the reorient slew ended on (engines-first along the predicted

@@ -897,7 +897,9 @@ function drawAt(simT, rate, videoT, holdT) {
   engineLight.intensity = on ? 900 * st.throttle * Math.sqrt(st.n) : 0;
 
   // chopsticks close over the last seconds of the approach
-  const closeU = THREE.MathUtils.smoothstep(simT, tEnd - 2.0, tEnd + 0.01);
+  // chopsticks close continuously through the landing burn: from ignition
+  // until about a second before the booster settles between them
+  const closeU = THREE.MathUtils.smoothstep(simT, tIgn, tEnd - 1.0);
   const ang = armOpen * (1 - closeU) + THREE.MathUtils.degToRad(-2.5) * closeU;
   arms.forEach(({ hinge, side }) => { hinge.rotation.y = side * -ang; });
 
