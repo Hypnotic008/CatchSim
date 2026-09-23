@@ -34,25 +34,26 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 
 **101 of 101 cases caught** (100 dispersed + nominal, seed 42): 95% lower
 confidence bound on the catch rate 96.3% (Wilson). The same seed
-caught 97/101 one guidance iteration earlier, and the original guidance
+caught 81/101 with a first, shorter version of the continuous-deceleration
+final approach (item 11), 97/101 in an earlier guidance iteration, and the original guidance
 caught 1/41 under the same dispersions.
 
 ![Monte Carlo](figs/monte_carlo.png)
 
 | criterion | limit | median | 95th pct | worst |
 |---|---|---|---|---|
-| lateral error | 1 m | 0.08 m | 0.36 m | 0.74 m |
-| horizontal speed | 0.5 m/s | 0.01 m/s | 0.22 m/s | 0.39 m/s |
-| vertical speed | 1 m/s | 0.51 m/s | 0.62 m/s | 0.67 m/s |
-| tilt | 0.5° | 0.15 ° | 0.23 ° | 0.23 ° |
-| body rate | 1°/s | 0.006 °/s | 0.018 °/s | 0.094 °/s |
+| lateral error | 1 m | 0.15 m | 0.47 m | 0.62 m |
+| horizontal speed | 0.5 m/s | 0.02 m/s | 0.18 m/s | 0.22 m/s |
+| vertical speed | 1 m/s | 0.50 m/s | 0.62 m/s | 0.67 m/s |
+| tilt | 0.5° | 0.17 ° | 0.24 ° | 0.25 ° |
+| body rate | 1°/s | 0.04 °/s | 0.10 °/s | 0.32 °/s |
 | vertical error | 1 m | 0.01 m | 0.02 m | 0.02 m |
 | fin roll | 10° | 0.00 ° | 0.00 ° | 0.00 ° |
 
-Propellant at catch: 51.9 t minimum, 59.4 t median. The tightest
-margins are lateral error and horizontal speed in the strongest surface
-winds (~12 m/s). With the roll locked from the coast onward, fin roll and body rate at
-the catch are essentially zero.
+Propellant at catch: 59.2 t minimum, 66.8 t median. The tightest
+margins are lateral error in the strongest jet-stream and surface winds.
+With the roll locked from the coast onward, fin roll and body rate at
+the catch stay small (fin roll ~0°, body rate ≤ 0.32°/s).
 
 The catch criteria (all must pass, evaluated when the centre of mass reaches
 the 105 m catch altitude): lateral error ≤ 1 m, vertical error ≤ 1 m,
