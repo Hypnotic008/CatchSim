@@ -1,0 +1,13 @@
+# Merge into the _headers file at your Netlify publish root.
+# Explicit types and range support so browsers stream and seek the video
+# instead of downloading it as an unknown file.
+/projects/catchsim/assets/videos/*
+  Content-Type: video/mp4
+  Accept-Ranges: bytes
+  Cache-Control: public, max-age=31536000
+
+/projects/catchsim/assets/images/*
+  Cache-Control: public, max-age=31536000
+
+/projects/catchsim/assets/data/*
+  Content-Type: text/csv; charset=utf-8
