@@ -21,7 +21,12 @@ const RENDER = params.has('render');
 const R_EARTH = 6371000.0;
 const L_BOOSTER = 72.3, R_BOOSTER = 4.5, COM_FRAC = 0.40;
 const AFT_X = -COM_FRAC * L_BOOSTER, NOSE_X = (1 - COM_FRAC) * L_BOOSTER;
-const HARDPOINT_ABOVE_COM = NOSE_X - 8.0;
+// V3 top end: the steel tank wall stops TOP_DROP below the nose; above it the
+// forward dome sits inside an open strut crown (the vented hot-stage ring).
+const TOP_DROP = 2.8, TOP_X = NOSE_X - TOP_DROP;
+// Grid fins (from the supplied STEP model) and the catch hardpoints under them.
+const FIN_X = TOP_X - 4.6;                             // fin mid-depth, body axis
+const HARDPOINT_ABOVE_COM = FIN_X - 2.8;               // arms close here
 const SUN_DIR = new THREE.Vector3(0.55, 0.42, 0.72).normalize();
 
 const M = window.MISSION || await (await fetch('./data/mission.json')).json();
@@ -322,34 +327,41 @@ function steelTexture() {
     sg.addColorStop(0, 'rgba(40,32,26,0)'); sg.addColorStop(1, `rgba(40,32,26,${0.10 + 0.15 * Math.random()})`);
     g.fillStyle = sg; g.fillRect(x, y0, 1 + 3 * Math.random(), h - y0);
   }
-  // hot-stage vent band near the top
-  const bandY = h * 0.035, bandH = h * 0.05;
-  g.fillStyle = '#2e2e30'; g.fillRect(0, bandY, w, bandH);
-  for (let k = 0; k < 64; k++) {
-    g.fillStyle = '#0c0c0d';
-    g.fillRect(k * w / 64 + 6, bandY + bandH * 0.18, w / 64 - 12, bandH * 0.64);
-  }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
 }
 
+// Grid fin mesh baked from the supplied STEP model (quatsim/tools: int16 mm,
+// non-indexed triangles). Fin-local axes: x along the body axis (centred on
+// the 0.75 m lattice depth), y tangential (6 m span), z radial with the root
+// adapter at z = 0 and the tip at 7 m.
+async function loadFinGeometry() {
+  let buf;
+  if (window.GRIDFIN_B64) {
+    const bin = atob(window.GRIDFIN_B64);
+    buf = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k);
+    buf = buf.buffer;
+  } else {
+    buf = await (await fetch('./assets/gridfin.i16')).arrayBuffer();
+  }
+  const i16 = new Int16Array(buf);
+  const pos = new Float32Array(i16.length);
+  for (let k = 0; k < i16.length; k++) pos[k] = i16[k] * 0.001;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();                        // non-indexed: flat facets
+  return g;
+}
+const FIN_GEO = await loadFinGeometry();
+const finMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2e, metalness: 0.65, roughness: 0.5,
+                                                side: THREE.DoubleSide });
 function gridFin() {
-  const grp = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x3c3d40, metalness: 0.75, roughness: 0.45 });
-  const depth = 1.4, span = 6.2, reach = 5.0;               // axial, tangential, radial
-  const t = 0.18, cells = 9, rows = 7;
-  const box = (sx, sy, sz, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-    m.position.set(x, y, z); m.castShadow = true; grp.add(m); };
-  // frame: x axial, y tangential, z radial (outward from 0)
-  box(depth, span, 0.35, 0, 0, 0.18); box(depth, span, 0.35, 0, 0, reach - 0.18);
-  box(depth, 0.35, reach, 0, span / 2 - 0.18, reach / 2); box(depth, 0.35, reach, 0, -span / 2 + 0.18, reach / 2);
-  for (let k = 1; k < cells; k++) box(depth * 0.9, t, reach, 0, -span / 2 + k * span / cells, reach / 2);
-  for (let k = 1; k < rows; k++) box(depth * 0.9, span, t, 0, 0, k * reach / rows);
-  // root fairing / actuator
-  box(2.4, 1.6, 1.0, 0, 0, -0.35);
-  return grp;
+  const m = new THREE.Mesh(FIN_GEO, finMat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
 }
 
 function bellGeometry() {
@@ -363,16 +375,43 @@ scene.add(booster);
 const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness: 0.82, roughness: 0.34,
                                                   envMapIntensity: 1.0 });
 {
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER, R_BOOSTER, L_BOOSTER, 128, 1, true), steelMat);
+  const bodyLen = TOP_X - AFT_X;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER, R_BOOSTER, bodyLen, 128, 1, true), steelMat);
   body.rotation.z = -Math.PI / 2;                   // cylinder Y -> body +X (top -> nose)
-  body.position.x = (NOSE_X + AFT_X) / 2;
+  body.position.x = (TOP_X + AFT_X) / 2;
   body.castShadow = true; body.receiveShadow = true;
   booster.add(body);
-  const capMat = new THREE.MeshStandardMaterial({ color: 0x9a9b9d, metalness: 0.8, roughness: 0.4 });
-  const cap = new THREE.Mesh(new THREE.CircleGeometry(R_BOOSTER, 64), capMat);
-  cap.rotation.y = Math.PI / 2; cap.position.x = NOSE_X; booster.add(cap);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(R_BOOSTER - 0.05, 0.22, 12, 96), capMat);
-  ring.rotation.y = Math.PI / 2; ring.position.x = NOSE_X; booster.add(ring);
+  const lightSteel = new THREE.MeshStandardMaterial({ color: 0xc9cbcd, metalness: 0.85, roughness: 0.3 });
+  // forward dome, rising inside the crown
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(R_BOOSTER - 0.05, 64, 16, 0, 2 * Math.PI, 0, Math.PI / 2),
+                              lightSteel);
+  dome.scale.set(1, 0.42, 1);                       // shallow ellipsoidal head
+  dome.rotation.z = -Math.PI / 2; dome.position.x = TOP_X; dome.castShadow = true;
+  booster.add(dome);
+  // open strut crown: a zig-zag of tubes between the tank rim and a top ring
+  {
+    const nV = 14, rr = R_BOOSTER - 0.12, tube = 0.16;
+    const ringTop = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.2, 10, 128), lightSteel);
+    ringTop.rotation.y = Math.PI / 2; ringTop.position.x = NOSE_X - 0.2; booster.add(ringTop);
+    const ringBot = new THREE.Mesh(new THREE.TorusGeometry(R_BOOSTER - 0.02, 0.16, 10, 128), lightSteel);
+    ringBot.rotation.y = Math.PI / 2; ringBot.position.x = TOP_X; booster.add(ringBot);
+    const strutGeo = new THREE.CylinderGeometry(tube, tube, 1, 8);
+    const mk = (a0, x0, a1, x1) => {
+      const p0 = new THREE.Vector3(x0, rr * Math.sin(a0), rr * Math.cos(a0));
+      const p1 = new THREE.Vector3(x1, rr * Math.sin(a1), rr * Math.cos(a1));
+      const d = p1.clone().sub(p0);
+      const m = new THREE.Mesh(strutGeo, lightSteel);
+      m.scale.set(1, d.length(), 1);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+      m.position.copy(p0).add(p1).multiplyScalar(0.5);
+      m.castShadow = true; booster.add(m);
+    };
+    for (let k = 0; k < nV; k++) {
+      const a = k * 2 * Math.PI / nV, b = (k + 0.5) * 2 * Math.PI / nV, c = (k + 1) * 2 * Math.PI / nV;
+      mk(a, TOP_X + 0.1, b, NOSE_X - 0.25);
+      mk(b, NOSE_X - 0.25, c, TOP_X + 0.1);
+    }
+  }
   // aft skirt and heat shield
   const skirt = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER + 0.12, R_BOOSTER + 0.12, 2.6, 96, 1, true),
     new THREE.MeshStandardMaterial({ color: 0x2b2826, metalness: 0.5, roughness: 0.7 }));
@@ -380,22 +419,32 @@ const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness
   const shield = new THREE.Mesh(new THREE.CircleGeometry(R_BOOSTER + 0.1, 64),
     new THREE.MeshStandardMaterial({ color: 0x1b1a19, metalness: 0.3, roughness: 0.85, side: THREE.DoubleSide }));
   shield.rotation.y = -Math.PI / 2; shield.position.x = AFT_X; booster.add(shield);
-  // three grid fins at 120 deg, third fin on body +Z
-  for (let k = 0; k < 3; k++) {
+  // grid fins: the middle ("third") fin on body +Z, the pair 180 deg apart at
+  // +/-90 deg from it (body +/-Y). At the catch body +Z points away from the
+  // tower, so the pair lies across the chopstick arms.
+  for (const a of [0, Math.PI / 2, -Math.PI / 2]) {
     const f = gridFin();
-    const a = k * 2 * Math.PI / 3;                   // 0 -> +Z
     const piv = new THREE.Group();
     piv.rotation.x = -a;                             // rotate about the body axis
-    f.position.set(NOSE_X - 5.2, 0, R_BOOSTER + 0.25);
+    f.position.set(FIN_X, 0, R_BOOSTER - 0.05);
     piv.add(f); booster.add(piv);
-    // catch hardpoint below each fin pair
   }
-  for (let k = 0; k < 2; k++) {
-    const hp = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 1.0),
-      new THREE.MeshStandardMaterial({ color: 0x505257, metalness: 0.7, roughness: 0.5 }));
-    const a = Math.PI / 2 + k * Math.PI;
-    hp.position.set(NOSE_X - 8.0, R_BOOSTER * Math.sin(a) * 1.02, R_BOOSTER * Math.cos(a) * 1.02);
+  // catch hardpoints below the fin pair
+  for (const sgn of [1, -1]) {
+    const hp = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.2, 1.2), finMat);
+    hp.position.set(HARDPOINT_ABOVE_COM + 0.7, sgn * (R_BOOSTER + 0.45), 0);
     booster.add(hp);
+  }
+  // raceway: cable/pressurisation conduit down the side opposite the middle fin
+  {
+    const len = TOP_X - 1.0 - (AFT_X + 3.0);
+    const rw = new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.32), lightSteel);
+    rw.position.set((TOP_X - 1.0 + AFT_X + 3.0) / 2, 0, -(R_BOOSTER + 0.14));
+    rw.castShadow = true; booster.add(rw);
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, len * 0.8, 10), lightSteel);
+    pipe.rotation.z = -Math.PI / 2;
+    pipe.position.set((TOP_X + AFT_X) / 2 + 3, 0.75, -(R_BOOSTER + 0.1));
+    booster.add(pipe);
   }
 }
 
@@ -637,9 +686,9 @@ const miniBooster = new THREE.Group();
     new THREE.MeshStandardMaterial({ color: 0x333333 }));
   aft.rotation.z = -Math.PI / 2; aft.position.x = -COM_FRAC * 1.7 + 0.06;
   miniBooster.add(body, aft);
-  for (let k = 0; k < 3; k++) {
+  for (const a of [0, Math.PI / 2, -Math.PI / 2]) {
     const f = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.2), new THREE.MeshStandardMaterial({ color: 0x777777 }));
-    const piv = new THREE.Group(); piv.rotation.x = -k * 2 * Math.PI / 3;
+    const piv = new THREE.Group(); piv.rotation.x = -a;
     f.position.set((1 - COM_FRAC) * 1.7 - 0.12, 0, 0.22); piv.add(f); miniBooster.add(piv);
   }
 }
@@ -757,29 +806,48 @@ const GROUND_CAM = new THREE.Vector3(TARGET.x - 260, 18, TARGET.z + 540);
 const smooth = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
 const _v = new THREE.Vector3();
 
+const frameAt = (t) => { const ft = M.frames.t; let k = 0; while (k < ft.length - 1 && ft[k] < t) k++; return k; };
+const VT_CUT = frameAt(tCut) / M.frames.fps, VT_APP = frameAt(tApproach) / M.frames.fps;
+const CAM_KEYS = [
+  { vt: 0.0,           d: 260, az: 0.90, el: 0.36, lead: 0.0, fov: 38 },
+  { vt: VT_CUT,        d: 210, az: 1.26, el: 0.36, lead: 0.0, fov: 38 },
+  { vt: VT_CUT + 6.0,  d: 300, az: 0.30, el: 0.95, lead: 0.6, fov: 40 },
+  { vt: VT_APP - 7.0,  d: 520, az: 0.15, el: 0.80, lead: 0.5, fov: 38 },
+  { vt: VT_APP,        d: 380, az: 0.25, el: 0.55, lead: 0.3, fov: 36 },
+];
+function flyCam(vt) {
+  const K = CAM_KEYS;
+  if (vt <= K[0].vt) return K[0];
+  for (let i = 0; i < K.length - 1; i++) {
+    if (vt <= K[i + 1].vt) {
+      const u = smooth(K[i].vt, K[i + 1].vt, vt), o = {};
+      for (const f of ['d', 'az', 'el', 'lead', 'fov']) o[f] = K[i][f] + u * (K[i + 1][f] - K[i][f]);
+      return o;
+    }
+  }
+  return K[K.length - 1];
+}
+
 function director(st, videoT, holdT) {
   const p = st.p;
   const nose = new THREE.Vector3(1, 0, 0).applyQuaternion(st.q);
-  if (st.t < tCut) {
-    // CHASE: slow orbit around the booster through flip and boostback
-    const a = 0.9 + 0.02 * st.t;
-    const d = 260 - 50 * smooth(0, 18, st.t);
-    const off = new THREE.Vector3(Math.cos(a) * d, 0.38 * d, Math.sin(a) * d);
+  if (st.t < tApproach) {
+    // ONE CONTINUOUS SHOT from separation to the approach: a chase orbit
+    // through flip and boostback, then (with no cut) the camera swings up
+    // and round behind the booster to look down on it and ahead toward the
+    // Earth and the tower while the coast fast-forwards. Keyframed in VIDEO
+    // time, so the move looks the same whatever the time warp.
+    const c = flyCam(videoT);
+    const off = new THREE.Vector3(Math.cos(c.el) * Math.cos(c.az), Math.sin(c.el),
+                                  Math.cos(c.el) * Math.sin(c.az)).multiplyScalar(c.d);
     camera.position.copy(p).add(off);
     camera.up.set(0, 1, 0);
-    camera.lookAt(_v.copy(p).addScaledVector(nose, 6));
-    camera.fov = 38;
-  } else if (st.t < tApproach) {
-    // LONG SHOT over the coast: pull back to show the arc, then close in as
-    // the booster falls into the thick air
-    const u = (st.t - tCut) / (tApproach - tCut);
-    const far = 700 * Math.sin(Math.PI * Math.min(u / 0.85, 1)) + 330;
-    const dir = new THREE.Vector3(-0.30, 0.55, 1.0).normalize();
-    camera.position.copy(p).addScaledVector(dir, far);
-    camera.position.y = Math.max(camera.position.y, 150);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(p);
-    camera.fov = 34;
+    const toTower = new THREE.Vector3(TARGET.x - p.x, 0, TARGET.z - p.z);
+    if (toTower.lengthSq() > 1) toTower.normalize();
+    const lookDir = toTower.multiplyScalar(0.85).add(new THREE.Vector3(0, -0.55, 0)).normalize();
+    camera.lookAt(_v.copy(p).addScaledVector(nose, 6 * (1 - c.lead))
+                    .addScaledVector(lookDir, c.lead * c.d * 0.45));
+    camera.fov = c.fov;
   } else {
     // GROUND TRACKING CAMERA with a long lens, easing to a fixed catch framing
     camera.position.copy(GROUND_CAM);
@@ -841,6 +909,13 @@ function drawAt(simT, rate, videoT, holdT) {
   if (controls && controls.enabled) {
     camera.position.add(_v.copy(st.p).sub(lastP));          // free camera rides along
     controls.target.copy(st.p); controls.update();
+  } else if (params.has('closeup')) {
+    // debug: look at the top of the booster from a chosen azimuth/elevation
+    const [az, el, d] = params.get('closeup').split(',').map(Number);
+    const top = new THREE.Vector3(FIN_X, 0, 0).applyQuaternion(st.q).add(st.p);
+    camera.position.set(top.x + d * Math.cos(el) * Math.cos(az), top.y + d * Math.sin(el),
+                        top.z + d * Math.cos(el) * Math.sin(az));
+    camera.up.set(0, 1, 0); camera.lookAt(top); camera.fov = 30; camera.updateProjectionMatrix();
   } else director(st, videoT, holdT);
   lastP.copy(st.p);
 

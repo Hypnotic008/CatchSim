@@ -536,7 +536,7 @@ def build_mission(
     flip_engines: int = 5,
     flip_throttle: float = 0.40,
     use_slew: bool = True,
-    reorient_duration: float = 100.0,
+    reorient_duration: float = 120.0,
     landing_3_duration: float = 4.0,
     bb_13_duration: float = 3.0,
     bb_3_duration: float = 3.0,
@@ -610,8 +610,22 @@ def build_mission(
     # Reorient endpoint: engines-first against the solved arrival velocity.
     # A fixed endpoint gives the slew something to aim at instead of chasing a
     # target that moves as the trajectory arcs over apogee.
+    # Reorient TARGET: engines-first along the velocity the booster will have
+    # at ENTRY INTERFACE (~55 km on the way down), from a ballistic
+    # propagation of the solved boostback burnout. Holding that attitude
+    # through the vacuum coast means the vehicle meets the air already
+    # aligned, instead of drifting broadside and then swinging ~80 deg into
+    # the wind once aerodynamic moments build (the old behaviour: an
+    # uncontrolled 'reorient' that looked like a belly-flop, then a swivel).
     v_arr = np.asarray(boostback["arrival_velocity"], dtype=float)
-    q_entry = attitude_from_pointing(-v_arr)
+    v_ei = v_arr
+    if "burnout_position" in boostback:
+        bo = D6.make_state(boostback["burnout_position"],
+                           boostback["burnout_velocity"], [1.0, 0, 0, 0],
+                           np.zeros(3), boostback.get("prop_after", 0.0))
+        _, v_ei, _, _ = _propagate_ballistic(vehicle, aero, bo, 55_000.0,
+                                             dt=0.1)
+    q_entry = attitude_from_pointing(-np.asarray(v_ei, float))
     reorient_seg = Segment("reorient", Mode.COAST, n_lit=0, n_gimballing=0,
                            duration=reorient_duration)
     reorient_seg.q_slew = Slew(q_retro, q_entry, 0.0, reorient_duration,

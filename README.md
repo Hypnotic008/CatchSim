@@ -36,23 +36,26 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 
 **101 of 101 cases caught** (100 dispersed + nominal, seed 42): 95% lower
 confidence bound on the catch rate 96.3% (Wilson). The same seed
-caught 97/101 one iteration earlier, and 1/41 with the original guidance.
+caught 97/101 one guidance iteration earlier, and the original guidance
+caught 1/41 under the same dispersions.
 
 ![Monte Carlo](figs/monte_carlo.png)
 
 | criterion | limit | median | 95th pct | worst |
 |---|---|---|---|---|
-| lateral error | 1 m | 0.08 m | 0.35 m | 0.73 m |
-| horizontal speed | 0.5 m/s | 0.01 m/s | 0.22 m/s | 0.37 m/s |
+| lateral error | 1 m | 0.09 m | 0.35 m | 0.73 m |
+| horizontal speed | 0.5 m/s | 0.02 m/s | 0.22 m/s | 0.40 m/s |
 | vertical speed | 1 m/s | 0.51 m/s | 0.62 m/s | 0.67 m/s |
-| tilt | 0.5° | 0.16° | 0.23° | 0.23° |
-| body rate | 1°/s | 0.006°/s | 0.02°/s | 0.10°/s |
+| tilt | 0.5° | 0.16 ° | 0.23 ° | 0.23 ° |
+| body rate | 1°/s | 0.044 °/s | 0.307 °/s | 0.536 °/s |
 | vertical error | 1 m | 0.01 m | 0.02 m | 0.02 m |
-| fin roll | 10° | 0.05° | 0.30° | 0.42° |
+| fin roll | 10° | 0.10 ° | 0.97 ° | 1.36 ° |
 
-Propellant at catch: 52.0 t minimum, 59.4 t median. The tightest
+Propellant at catch: 51.9 t minimum, 59.4 t median. The tightest
 margins are lateral error and horizontal speed in the strongest surface
-winds (~12 m/s).
+winds (~12 m/s). The controlled coast reorient changed the roll state the
+booster arrives with, so the worst body rate (0.54°/s) and fin roll (1.4°)
+at the catch are higher than before that change, still well inside limits.
 
 The catch criteria (all must pass, evaluated when the centre of mass reaches
 the 105 m catch altitude): lateral error ≤ 1 m, vertical error ≤ 1 m,
@@ -132,6 +135,13 @@ diagnosed failure, in this order:
    with what the *actual* thrust vector should produce, and cancels the
    difference. Comparing with the command instead let attitude lag bias a
    calm-air catch by 0.3 m.
+9. **The coast attitude was a belly-flop and a swivel.** The old "reorient"
+   segment never commanded anything: the booster drifted broadside (tilt
+   ~95°) for 100 s after boostback, then the entry hold swung it ~80° at
+   up to 2.6°/s to meet the airflow. The reorient is now a controlled RCS
+   slew to engines-first along the velocity predicted at entry interface,
+   held until the air thickens (peak rate 1.5°/s, then ~0 through the
+   coast).
 
 ## The 3-D animation
 
@@ -144,15 +154,19 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   aerial-perspective haze integrated through an exponential atmosphere. The
   sky darkens to space with altitude.
 - **Booster:** stainless steel with PBR reflections, weld seams, soot on the
-  lower half and the V3 hot-stage vent ring. It has three lattice grid fins
-  and 33 bells in the webcast layout. Plumes expand into translucent vacuum
+  lower half, the forward dome inside the open strut crown, and the side
+  raceway. It has three grid fins from the supplied STEP model (the middle
+  fin with the pair 180° apart at ±90° from it, the pair resting on the
+  chopsticks at the catch) and 33 bells in the webcast layout. Plumes expand into translucent vacuum
   plumes at altitude and tighten to shock-diamond plumes near the ground.
   The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 3).
 - **Tower:** lattice tower with chopsticks that close as the booster
   arrives, launch mount and tank farm.
-- **Cameras:** broadcast-style shots: a chase camera through flip and
-  boostback, a descending long shot over the Gulf, then a long-lens ground
-  tracking camera from the approach to the catch.
+- **Cameras:** one continuous move from separation to the approach: a chase
+  orbit through flip and boostback that swings up behind the booster to
+  look down on it and ahead toward the Earth and the tower through the coast.
+  Then a cut to a long-lens ground tracking camera for the landing and
+  catch.
 - **HUD:** speed, altitude, engine diagram with a throttle gauge, an
   attitude sphere, and a mission timeline spaced by video time with a
   time-warp indicator.
@@ -167,7 +181,7 @@ eased transitions and a 6 s hold on the caught booster.
 |---|---|---|---|
 | flip | 5 → 33 | smooth pure-pitch slew | `mission.py` |
 | boostback | 33 → 13 → 3 | predictive cutoff + heading, re-solved in flight; thrust and mass-flow estimators | `mission.py`, `phases.py` |
-| reorient + coast | 0 | RCS hold tail-first to the relative wind; grid-fin entry steering once q > 1.5 kPa; drag estimator | `entry.py`, `phases.py` |
+| reorient + coast | 0 | RCS slew (~120 s, rate/accel feed-forward) to engines-first along the predicted entry-interface velocity, held through the vacuum coast, blended into the relative wind as q builds; grid-fin entry steering once q > 1.5 kPa; drag estimator | `mission.py`, `entry.py`, `phases.py` |
 | landing brake | 13 | energy-matched vertical, velocity-field lateral, 3-D thrust vector | `landing.py` |
 | final approach | 3 | constant descent + flare, velocity-field lateral + disturbance observer, closing tilt envelope, roll to catch | `landing.py` |
 

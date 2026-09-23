@@ -172,13 +172,17 @@ def build_viewer(mission_json: str, out_html: str,
     html = open(os.path.join(viz_dir, "index.html")).read()
     js = open(os.path.join(viz_dir, "scene.js")).read()
     data = open(mission_json).read()
+    import base64
+    fin = base64.b64encode(open(os.path.join(viz_dir, "assets", "gridfin.i16"),
+                                "rb").read()).decode()
     cdn = f"https://cdn.jsdelivr.net/npm/three@{three_version}"
     html = html.replace('"./node_modules/three/build/three.module.js"',
                         f'"{cdn}/build/three.module.js"')
     html = html.replace('"./node_modules/three/examples/jsm/"',
                         f'"{cdn}/examples/jsm/"')
     html = html.replace('<script type="module" src="./scene.js"></script>',
-                        "<script>window.MISSION = " + data + ";</script>\n"
+                        "<script>window.MISSION = " + data + ";\n"
+                        'window.GRIDFIN_B64 = "' + fin + '";</script>\n'
                         '<script type="module">\n' + js + "\n</script>")
     with open(out_html, "w") as fh:
         fh.write(html)

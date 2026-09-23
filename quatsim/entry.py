@@ -124,14 +124,22 @@ class EntryGuidance:
         v_hat = v_air / speed
         z_now = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
         if q_dyn < c.q_min:
-            # Too thin to steer, but not too thin to matter: hold tail-first
-            # along the relative wind (RCS) so the vehicle ENTERS aligned.
-            # Left alone it arrived at the sensible atmosphere off-trim and
-            # swung +/-25 deg about it, and with body lift those swings threw
-            # it ~1 km sideways before the fins had any authority.
-            return (attitude_from_pointing(-v_hat, roll_reference=z_now),
-                    {"alpha_deg": 0.0, "alpha_lim_deg": 0.0,
-                     "q_dyn": q_dyn, "mach": speed / ENV.speed_of_sound(r[2])})
+            # Too thin to steer, but not too thin to matter. Hold the attitude
+            # the reorient slew ended on (engines-first along the predicted
+            # entry-interface velocity), then blend to tail-first along the
+            # actual relative wind as dynamic pressure builds, so the vehicle
+            # ENTERS aligned. Left uncontrolled it arrived off-trim, swung
+            # +/-25 deg, and with body lift was thrown ~1 km sideways before
+            # the fins had authority.
+            tail = attitude_from_pointing(-v_hat, roll_reference=z_now)
+            hold = getattr(self, "hold_q", None)
+            info = {"alpha_deg": 0.0, "alpha_lim_deg": 0.0, "q_dyn": q_dyn,
+                    "mach": speed / ENV.speed_of_sound(r[2])}
+            if hold is None:
+                return tail, info
+            u = float(np.clip((q_dyn - 0.2 * c.q_min) / (0.8 * c.q_min), 0.0, 1.0))
+            u = u * u * (3.0 - 2.0 * u)
+            return Q.slerp(np.asarray(hold, float), tail, u), info
 
         if t - self._t_last >= c.period:
             self._t_last = t

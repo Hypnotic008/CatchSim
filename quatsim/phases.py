@@ -334,6 +334,7 @@ class FlightSequencer:
         self._thrust_scale_n = 0.0
         self._entry = None
         self._entry_log = []
+        self._coast_hold_q = None
         self._drag_scale = 1.0
         import copy as _copy
         self._est_aero = _copy.copy(self.gnc_aero)
@@ -623,13 +624,14 @@ class FlightSequencer:
                 return None
             self._entry = EntryGuidance(cfg, self.gnc_vehicle, self._est_aero,
                                         self.fins)
+        self._entry.hold_q = self._coast_hold_q
         q_ref, info = self._entry.command(r, v, q, prop, self._t_now)
         if q_ref is not None:
             self._entry_log.append(dict(info, t=self._t_now,
                                         alt=float(r[2])))
         return q_ref
 
-    def _coast_control(self, q, w, q_ref, prop, v, r):
+    def _coast_control(self, q, w, q_ref, prop, v, r, w_ref=None, a_ref=None):
         """
         Engines-off attitude control: grid fins for pitch/yaw, RCS for roll
         and as pitch/yaw backup.
@@ -659,7 +661,9 @@ class FlightSequencer:
         saved = ctrl.gains
         ctrl.gains = ControlGains(wn=wn, zeta=0.9)
         try:
-            tau, _ = ctrl.torque_command(q, w, q_ref, np.zeros(3), I)
+            tau, _ = ctrl.torque_command(
+                q, w, q_ref, np.zeros(3) if w_ref is None else w_ref, I,
+                alpha_ref=a_ref)
         finally:
             ctrl.gains = saved
         tau = tau - AERO.restoring_moment(q_ref, v_air, h)
@@ -724,8 +728,19 @@ class FlightSequencer:
             # No lit engines: no gimbal. With an entry-guidance config the
             # grid fins (plus RCS) steer the descent -- see entry.py. Without
             # one the vehicle is left to weathercock, as before.
+            # REORIENT: fly the scheduled slew on RCS (rate and acceleration
+            # feed-forward), then remember where it ended so the coast can
+            # hold it until the air is thick enough to matter.
+            if seg.q_slew is not None and self.fins is not None:
+                q_ref, w_ref, a_ref = seg.q_slew.at(t_seg)
+                self._coast_hold_q = np.asarray(seg.q_slew.q_end, float)
+                tau = self._coast_control(q, w, q_ref, prop, v, r,
+                                          w_ref=w_ref, a_ref=a_ref)
+                return 0.0, tau, 0.0, 0.0, 0.0, r.copy(), q_ref
             if seg.entry is not None and self.fins is not None:
                 q_ref = self._entry_reference(seg.entry, r, v, q, prop)
+                if q_ref is None:
+                    q_ref = self._coast_hold_q
                 if q_ref is not None:
                     tau = self._coast_control(q, w, q_ref, prop, v, r)
                     return 0.0, tau, 0.0, 0.0, 0.0, r.copy(), q_ref
