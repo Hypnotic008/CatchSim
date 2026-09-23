@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Deluge System — Dalen Wagga</title>
+<meta name="description" content="Small-scale water deluge system modeled on the Starship flame deflector: CAD, two Ansys meshing approaches and an instrumented ground-test bill of materials.">
+<meta property="og:title" content="Water Deluge System — Dalen Wagga">
+<meta property="og:image" content="assets/images/deluge-plate-cad.png">
+<link rel="stylesheet" href="../../assets/css/site.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="topnav"><a class="back" href="../../">&larr; Back to portfolio</a></nav>
+
+  <header>
+    <div class="eyebrow">CFD · Ground Systems · In progress</div>
+    <h1>Water Deluge System</h1>
+    <p class="lede">A small-scale water deluge system modeled on the SpaceX Starship flame deflector. The work covers the plate design in Inventor, meshing in Ansys and a costed bill of materials for an instrumented ground test.</p>
+    <ul class="tags">
+      <li>Autodesk Inventor</li><li>Ansys Meshing</li><li>Ansys Fluent</li><li>Mesh quality</li><li>Test planning</li>
+    </ul>
+  </header>
+
+  <section>
+    <h2>Deluge plate</h2>
+    <figure>
+      <img src="assets/images/deluge-plate-cad.png" width="1665" height="860" alt="Stainless-steel deluge plate CAD with rings of angled orifices">
+      <figcaption>A stainless-steel deluge plate with ~100 orifices in concentric rings, angled from 0° to 30°, and a side inlet feeding the internal manifold.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Meshing: two approaches</h2>
+    <p class="muted">The first mesh was polyhedral. The second is a hybrid mesh of ~1M cells, with a hex core and tetrahedral refinement at the orifice plate. Before committing to a solve, I checked it against element quality, orthogonal quality and skewness.</p>
+    <div class="grid2">
+      <figure>
+        <img src="assets/images/polyhedral-mesh.png" width="1019" height="506" loading="lazy" alt="Polyhedral mesh of the fluid domain, refined toward the plate">
+        <figcaption>First approach: polyhedral mesh, refined toward the orifice plate.</figcaption>
+      </figure>
+      <figure>
+        <img src="assets/images/hybrid-mesh.png" width="1149" height="755" loading="lazy" alt="Hybrid mesh with hex core and tetrahedral refinement at the orifice plate">
+        <figcaption>Second approach: hybrid mesh (~1M cells) with a hex core and tet refinement at the plate.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>Mesh quality checks</h2>
+    <p class="muted">Histograms of the hybrid mesh by element type (Tet4, Hex8, Wed6, Pyr5). Skewness clusters low (good) and the quality metrics cluster high (good).</p>
+    <div class="strip">
+      <img src="assets/images/mesh-metric-1.png" width="1581" height="144" loading="lazy" alt="Mesh metric histogram clustered at low values">
+      <img src="assets/images/mesh-metric-2.png" width="1588" height="143" loading="lazy" alt="Mesh metric histogram clustered at high values">
+      <img src="assets/images/mesh-metric-3.png" width="1576" height="145" loading="lazy" alt="Mesh metric histogram clustered at high values">
+    </div>
+  </section>
+
+  <section>
+    <h2>Ground test bill of materials</h2>
+    <p class="muted">The instrumented test needs a solenoid valve, a nitrogen regulator and tank, a pressurized water tank and 3/4" piping. Each line item has its vendor and cost tracked.</p>
+    <figure>
+      <img src="assets/images/bill-of-materials.png" width="823" height="728" loading="lazy" alt="Bill of materials spreadsheet with parts, prices and purchase status" style="max-width:823px">
+      <figcaption>Working BOM with part, price, photo, sourcing status and vendor link.</figcaption>
+    </figure>
+  </section>
+
+  <footer><a class="back" href="../../">&larr; Back to portfolio</a></footer>
+</div>
+</body>
+</html>
