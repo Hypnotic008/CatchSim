@@ -57,8 +57,10 @@ PHASES
               so throttle is an output rather than a schedule. Lateral: a
               velocity-field braking law toward the point above the tower,
               so 13 engines do the divert and hand over nearly overhead.
-    TERMINAL  3 engines. Vertical: constant descent at v_desc, then a
-              constant-deceleration flare to v_touch at the catch plane.
+    TERMINAL  3 engines. Vertical: one constant-deceleration arc from the
+              handover speed (~24 m/s) to v_touch at the catch plane, so
+              the speed is wiped off smoothly rather than stopped high and
+              crept down.
               Lateral: the velocity field sized for 3-engine authority, plus
               the disturbance observer. A tilt envelope that closes a settle
               time before the catch keeps the final attitude inside the catch
@@ -108,35 +110,47 @@ class LandingConfig:
     # fraction of what 13 engines can deliver. <1 leaves throttle headroom
     # for dispersions and for leaning over to divert.
     brake_margin: float = 0.45
-    gate_altitude: float = 250.0          # absolute altitude of the handover
-    v_gate: float = 8.0                   # descent rate at the handover
+    # Absolute altitude of the handover. 320 m (was 250) gives the 3-engine
+    # phase ~215 m to wipe off 24 m/s at a constant 1.35 m/s^2 (~18 s): a
+    # 12 s version was smooth on the nominal but left too little time to
+    # divert a windy 45 m handover error (81/101 caught).
+    gate_altitude: float = 320.0
+    # The 13 -> 3 handover happens at a real descent rate, and the 3-engine
+    # phase then decelerates CONTINUOUSLY to the catch (v_gate = v_desc and
+    # a_flare chosen so the flare spans the whole final approach). The old
+    # 8 m/s handover made the booster stop high and creep ~25 s into the arms.
+    v_gate: float = 24.0                  # descent rate at the handover
     max_tilt_brake: float = np.radians(30.0)
     # Hand over to 3 engines once the brake has slowed below this multiple of
     # v_gate. Waiting for the gate altitude with 13 engines at their floor
     # would over-brake and climb.
-    handover_speed_factor: float = 1.6
+    handover_speed_factor: float = 1.3
 
     # --- terminal --------------------------------------------------------
-    v_desc: float = 8.0                   # constant-descent segment
-    a_flare: float = 0.55                 # flare deceleration, m/s^2
+    v_desc: float = 24.0                  # cap on the terminal descent rate
+    a_flare: float = 1.35                 # constant terminal deceleration, m/s^2
     v_touch: float = 0.30                 # descent rate at the catch plane
     k_v: float = 1.5                      # vertical velocity-error gain, 1/s
     max_tilt_terminal: float = np.radians(12.0)
     # Tilt envelope: allowed lean grows with time-to-go at this rate, so the
     # attitude loop always has time to bring the vehicle upright.
-    tilt_envelope_rate: float = np.radians(1.2)   # rad per second of t_go
+    tilt_envelope_rate: float = np.radians(2.0)   # rad per second of t_go
     tilt_envelope_floor: float = np.radians(0.25)
     # Minimum time-to-go the lateral law is evaluated at. The polynomial gains
     # scale as 1/T^2; flooring T keeps them finite, and the envelope above
     # keeps the resulting lean small.
     t_go_floor: float = 2.5
-    settle_time: float = 3.0              # s of near-upright flight at the end
+    settle_time: float = 2.5              # s of near-upright flight at the end
     # Terminal lateral velocity field (see the brake equivalents).
     # Tuned against the landing-detail plots: 0.5 / 3.5 s / 0.8 caught, but
     # as a 3 s limit cycle swinging 0-12 deg against attitude-loop lag.
-    term_lat_frac: float = 0.3
-    term_lat_tau: float = 5.0
-    term_lat_gain: float = 0.4
+    # Retuned for the ~18 s continuous-deceleration final approach (was
+    # 0.3 / 5 s / 0.4 for the old ~25 s creep).
+    term_lat_frac: float = 0.5
+    term_lat_tau: float = 4.0
+    term_lat_gain: float = 0.55
+    term_lat_lag: float = 1.5             # s, velocity-loop allowance
+    term_stop_frac: float = 0.6           # of envelope stopping capacity
     dist_tau: float = 3.0                 # s, disturbance-observer filter
     dist_max: float = 0.5                 # m/s^2, observer clamp
     # Brake lateral velocity field: design deceleration as a fraction of the
@@ -145,7 +159,7 @@ class LandingConfig:
     brake_lat_tau: float = 3.0
     brake_lat_gain: float = 0.9
     brake_lat_lag: float = 1.0            # s, attitude-loop allowance
-    v_lat_handover: float = 2.0           # m/s allowed at the handover
+    v_lat_handover: float = 1.0           # m/s allowed at the handover
 
     # --- roll ------------------------------------------------------------
     # Body z (third grid fin) must point away from the tower at the catch.
@@ -230,6 +244,19 @@ class LandingGuidance:
             t_go = (v_ref - c.v_touch) / c.a_flare
             in_flare = True
         return v_ref, t_go, in_flare
+
+    def _envelope_stop(self, f_z: float, tau: float) -> float:
+        """Lateral speed removable in the last ``tau`` s before the settle
+        window if the lean follows the closing envelope, i.e.
+        integral_0^tau f_z tan(min(max_tilt, rate s)) ds."""
+        c = self.cfg
+        s1 = c.max_tilt_terminal / c.tilt_envelope_rate
+        if tau <= s1:
+            return f_z * -np.log(np.cos(c.tilt_envelope_rate * tau)) \
+                / c.tilt_envelope_rate
+        return f_z * (-np.log(np.cos(c.max_tilt_terminal))
+                      / c.tilt_envelope_rate
+                      + (tau - s1) * np.tan(c.max_tilt_terminal))
 
     def _a_max_vertical(self, n: int, m: float, drag_up: float) -> float:
         return self.vehicle.axial_thrust(n, 1.0) / m - ENV.G0 + drag_up / m
@@ -352,8 +379,16 @@ class LandingGuidance:
             e = r[:2] - tgt[:2]
             d = float(np.linalg.norm(e))
             if d > 1e-6:
+                # Fourth cap: the speed the CLOSING tilt envelope can still
+                # remove before the settle window, allowing for the lag of
+                # the velocity loop. The envelope limits lean to rate*tau,
+                # so the lateral speed it can remove over the last tau
+                # seconds grows like tau^2; a constant a_d over-promised it
+                # and a windy handover overshot the tower by 15 m.
+                tau = max(t_go_v - c.settle_time - c.term_lat_lag, 0.0)
                 sp = min(np.sqrt(2.0 * a_d * d), d / c.term_lat_tau,
-                         a_d * max(t_go_v - c.settle_time, 0.0))
+                         a_d * max(t_go_v - c.settle_time, 0.0),
+                         c.term_stop_frac * self._envelope_stop(f_z_est, tau))
                 v_des = -e / d * sp
             else:
                 v_des = np.zeros(2)

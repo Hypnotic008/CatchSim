@@ -110,8 +110,8 @@ diagnosed failure, in this order:
    ever damped, never steered to the target; the tilt taper was cancelled by
    a 20° floor; and drag was treated as always pointing up.
    `quatsim/landing.py` replaces it with one law in both engine phases:
-   - vertical energy matching to a gate, then a constant-descent-plus-flare
-     reference;
+   - vertical energy matching to a gate, then one constant-deceleration
+     arc to the catch (see item 11);
    - a 3-D thrust-vector solve including estimated drag and lift, with
      vertical priority under tilt and throttle limits;
    - a velocity-field lateral law that is bounded everywhere and time-capped
@@ -146,6 +146,17 @@ diagnosed failure, in this order:
     it, and the landing burn locks it. Roll rate through the burn is ~0, and
     the terminal roll manoeuvre is only a fallback for a vehicle that arrives
     more than 35° off-roll.
+11. **The final approach stopped high and crept into the arms.** The 13-engine
+    brake cut the descent to 8 m/s at 250 m, and the 3-engine phase then
+    descended at 8 m/s before a gentle flare: ~25 s of near-hover. The brake
+    now hands over at ~24 m/s at 320 m, and the 3-engine phase wipes that off
+    in one constant 1.35 m/s² deceleration (~17 s), so the speed bleeds away
+    continuously all the way into the chopsticks. A first 12 s version
+    (2 m/s² from 250 m) was smooth on the nominal but caught only 81/101:
+    with a 45 m handover error in a strong jet stream the lateral law
+    overshot the tower and the closing tilt envelope could not stop it. The
+    longer arc fixed that, and the lateral field gained a fourth speed cap:
+    the speed the closing envelope can still remove before the settle window.
 
 ## The 3-D animation
 
@@ -187,7 +198,7 @@ eased transitions and a 6 s hold on the caught booster.
 | boostback | 33 → 13 → 3 | predictive cutoff + heading, re-solved in flight; thrust and mass-flow estimators | `mission.py`, `phases.py` |
 | reorient + coast | 0 | RCS slew (~120 s, rate/accel feed-forward) to engines-first along the predicted entry-interface velocity, held through the vacuum coast, blended into the relative wind as q builds; grid-fin entry steering once q > 1.5 kPa; drag estimator | `mission.py`, `entry.py`, `phases.py` |
 | landing brake | 13 | energy-matched vertical, velocity-field lateral, 3-D thrust vector | `landing.py` |
-| final approach | 3 | constant descent + flare, velocity-field lateral + disturbance observer, closing tilt envelope, roll to catch | `landing.py` |
+| final approach | 3 | one constant-deceleration arc (24 → 0.5 m/s at 1.35 m/s²), velocity-field lateral + disturbance observer, closing tilt envelope, roll to catch | `landing.py` |
 
 ## Modelling notes and honest limits
 

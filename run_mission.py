@@ -77,7 +77,7 @@ def build():
 # on it, and the landing burn performs the final divert in. The predictive
 # boostback now hits this point to within a few metres, so it is a design
 # choice rather than a calibration fudge.
-AIM_X_1200 = 250.0
+AIM_X_1200 = 200.0
 
 
 def landing_config() -> LandingConfig:
