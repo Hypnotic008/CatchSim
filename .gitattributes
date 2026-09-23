@@ -1,0 +1,10 @@
+# Keep media byte-for-byte: no line-ending conversion, no text diffs.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.mp4  binary
+*.webm binary
+*.mov  binary
+*.i16  binary

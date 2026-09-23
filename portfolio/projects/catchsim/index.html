@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CatchSim — Super Heavy Tower Catch</title>
+<meta name="description" content="6-DOF quaternion simulation of a Super Heavy V3 booster return-to-launch-site and chopstick catch, with closed-loop guidance and a 101/101 Monte Carlo campaign.">
+<meta property="og:title" content="CatchSim — Super Heavy Tower Catch">
+<meta property="og:description" content="6-DOF booster return and tower catch simulation. 101 of 101 dispersed cases caught.">
+<meta property="og:image" content="assets/images/mission_overview.png">
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #13171c; --line: #242a31;
+    --text: #e7eaee; --muted: #9aa4ae; --accent: #ff7a1a; --ok: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  nav { padding: 20px 0; font-size: 14px; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a:hover { color: var(--text); }
+  header { padding: 24px 0 8px; }
+  .eyebrow { color: var(--accent); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.1; margin: 8px 0 12px; }
+  .lede { color: var(--muted); font-size: 18px; max-width: 760px; margin: 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 0; padding: 0; list-style: none; }
+  .tags li { border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 13px; color: var(--muted); }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+  .btn { display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #111; }
+  .btn:hover { filter: brightness(1.1); }
+  section { padding: 40px 0 8px; }
+  h2 { font-size: 24px; margin: 0 0 16px; }
+  video { width: 100%; display: block; border-radius: 12px; background: #000; border: 1px solid var(--line); }
+  .caption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .stat b { display: block; font-size: 28px; line-height: 1.2; }
+  .stat b.ok { color: var(--ok); }
+  .stat span { color: var(--muted); font-size: 14px; }
+  figure { margin: 0 0 28px; }
+  figure img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 520px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  ol.fixes { padding-left: 20px; }
+  ol.fixes li { margin-bottom: 10px; }
+  ol.fixes b { color: var(--text); }
+  ol.fixes { color: var(--muted); }
+  footer { padding: 48px 0 40px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav><a href="/">&larr; Back to portfolio</a></nav>
+
+  <header>
+    <div class="eyebrow">Guidance, Navigation &amp; Control</div>
+    <h1>CatchSim: Super Heavy return and tower catch</h1>
+    <p class="lede">A 6-DOF, quaternion-based simulation of a Super Heavy V3 booster from hot-stage separation to the chopstick catch. It has closed-loop guidance for every phase, a 100-case Monte Carlo campaign and a 3-D render of the full flight.</p>
+    <ul class="tags">
+      <li>Python</li><li>NumPy / SciPy</li><li>6-DOF dynamics</li><li>Quaternions</li>
+      <li>Guidance &amp; control</li><li>Monte Carlo</li><li>Three.js</li>
+    </ul>
+    <div class="btns">
+      <a class="btn primary" href="assets/interactive/catch3d_viewer.html" target="_blank" rel="noopener">Open interactive 3-D viewer</a>
+      <a class="btn" href="https://github.com/Hypnotic8008/CatchSim" target="_blank" rel="noopener">Source on GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>Full flight, rendered in 3-D</h2>
+    <video controls playsinline preload="metadata" poster="assets/images/mission_overview.png">
+      <source src="assets/videos/catch3d.mp4" type="video/mp4">
+      Your browser can't play this video. <a href="assets/videos/catch3d.mp4">Download it</a> instead.
+    </video>
+    <p class="caption">Boostback in real time, coast at 12×, the last 8 km at 3×, then the landing burn and catch in real time. Rendered frame by frame with Three.js in headless Chromium.</p>
+  </section>
+
+  <section>
+    <h2>Results</h2>
+    <div class="stats">
+      <div class="stat"><b class="ok">101 / 101</b><span>dispersed cases caught (seed 42)</span></div>
+      <div class="stat"><b>96.3%</b><span>95% lower bound on catch rate (Wilson)</span></div>
+      <div class="stat"><b>0.62 m</b><span>worst lateral error (limit 1 m)</span></div>
+      <div class="stat"><b>1 / 41</b><span>catches with the original guidance</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Mission overview</h2>
+    <figure>
+      <img src="assets/images/mission_overview.png" width="2080" height="1222" loading="lazy" alt="Trajectory hook, phase-coloured time histories and catch scorecard">
+      <figcaption>Trajectory hook, phase-coloured time histories and the catch scorecard.</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/images/landing_detail.png" width="2080" height="1222" loading="lazy" alt="Landing burn detail: side and top views, descent rate, horizontal speed, tilt and throttle">
+      <figcaption>Landing burn: to-scale side and top views, descent rate, horizontal speed, tilt against the guidance envelope, and throttle.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Monte Carlo robustness</h2>
+    <p style="color:var(--muted)">Each case plans on the nominal models, flies a dispersed truth plant and guides on what it can measure in flight. Dispersions cover separation state, per-engine thrust, Isp, mass, drag, air density, surface winds up to 12 m/s, jet streams up to 60 m/s and wind-forecast error.</p>
+    <figure>
+      <img src="assets/images/monte_carlo.png" width="2080" height="1300" loading="lazy" alt="Monte Carlo footprint, ignition dispersion, margins, trajectories, propellant and sensitivity">
+      <figcaption>Footprint, ignition dispersion, margin on every criterion, landing trajectories, propellant and sensitivity. <a href="assets/data/monte_carlo.csv" download>Download the raw CSV</a>.</figcaption>
+    </figure>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Catch criterion</th><th>Limit</th><th>Median</th><th>95th pct</th><th>Worst</th></tr></thead>
+        <tbody>
+          <tr><td>Lateral error</td><td class="num">1 m</td><td class="num">0.15 m</td><td class="num">0.47 m</td><td class="num">0.62 m</td></tr>
+          <tr><td>Horizontal speed</td><td class="num">0.5 m/s</td><td class="num">0.02 m/s</td><td class="num">0.18 m/s</td><td class="num">0.22 m/s</td></tr>
+          <tr><td>Vertical speed</td><td class="num">1 m/s</td><td class="num">0.50 m/s</td><td class="num">0.62 m/s</td><td class="num">0.67 m/s</td></tr>
+          <tr><td>Tilt</td><td class="num">0.5°</td><td class="num">0.17°</td><td class="num">0.24°</td><td class="num">0.25°</td></tr>
+          <tr><td>Body rate</td><td class="num">1°/s</td><td class="num">0.04°/s</td><td class="num">0.10°/s</td><td class="num">0.32°/s</td></tr>
+          <tr><td>Vertical error</td><td class="num">1 m</td><td class="num">0.01 m</td><td class="num">0.02 m</td><td class="num">0.02 m</td></tr>
+          <tr><td>Fin roll</td><td class="num">10°</td><td class="num">0.00°</td><td class="num">0.00°</td><td class="num">0.00°</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>From 1/41 to 101/101</h2>
+    <p style="color:var(--muted)">The starting point caught the booster on the nominal trajectory, but a 2 km shift in the separation point missed the tower by about 1 km. Each fix below came from a diagnosed failure:</p>
+    <ol class="fixes">
+      <li><b>Continuous boostback predictor.</b> Stage switches now land exactly on step boundaries, and an Illinois-secant solver re-solves cutoff time and heading every 1.5 s during the burn.</li>
+      <li><b>In-flight estimation.</b> IMU-style thrust-to-mass and tank-gauge mass-flow estimators remove the dominant thrust and Isp dispersion errors.</li>
+      <li><b>Grid-fin entry guidance.</b> Predicts the arrival point and commands angle of attack within fin authority, using a wind forecast and an in-flight drag estimator.</li>
+      <li><b>Unified landing law.</b> Energy matching to a gate, then one constant-deceleration arc into the chopsticks, with a 3-D thrust-vector solve that includes estimated drag and lift.</li>
+      <li><b>Disturbance observer.</b> Cancels steady surface wind at the catch by comparing measured acceleration with what the actual thrust vector should produce.</li>
+      <li><b>Attitude and roll.</b> A controlled RCS slew to engines-first during the coast, with catch roll set in vacuum and locked through the burn.</li>
+    </ol>
+  </section>
+
+  <footer>
+    <a href="/">&larr; Back to portfolio</a>
+  </footer>
+</div>
+</body>
+</html>
