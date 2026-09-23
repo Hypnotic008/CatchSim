@@ -47,12 +47,19 @@
 
   <section>
     <h2>Mesh quality checks</h2>
-    <p class="muted">Histograms of the hybrid mesh by element type (Tet4, Hex8, Wed6, Pyr5). Skewness clusters low (good) and the quality metrics cluster high (good).</p>
-    <div class="strip">
-      <img src="assets/images/mesh-metric-1.png" width="1581" height="144" loading="lazy" alt="Mesh metric histogram clustered at low values">
-      <img src="assets/images/mesh-metric-2.png" width="1588" height="143" loading="lazy" alt="Mesh metric histogram clustered at high values">
-      <img src="assets/images/mesh-metric-3.png" width="1576" height="145" loading="lazy" alt="Mesh metric histogram clustered at high values">
-    </div>
+    <p class="muted">Metric histograms for the hybrid mesh, by element type (Tet4, Hex8, Wed6, Pyr5). Skewness clusters low and both quality metrics cluster high, which is what you want before running a solve.</p>
+    <figure class="strip">
+      <img src="assets/images/mesh-skewness.png" width="1581" height="144" loading="lazy" alt="Skewness histogram, clustered at low values">
+      <figcaption>Skewness (0 is ideal).</figcaption>
+    </figure>
+    <figure class="strip">
+      <img src="assets/images/mesh-orthogonal-quality.png" width="1588" height="143" loading="lazy" alt="Orthogonal quality histogram, clustered at high values">
+      <figcaption>Orthogonal quality (1 is ideal).</figcaption>
+    </figure>
+    <figure class="strip">
+      <img src="assets/images/mesh-element-quality.png" width="1576" height="145" loading="lazy" alt="Element quality histogram, clustered at high values">
+      <figcaption>Element quality (1 is ideal).</figcaption>
+    </figure>
   </section>
 
   <section>

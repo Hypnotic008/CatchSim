@@ -4,15 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Page not found — Dalen Wagga</title>
-<link rel="stylesheet" href="/assets/css/site.css">
+<style>
+  body { margin: 0; background: #0b0d10; color: #e7eaee; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 80px 16px; }
+  .eyebrow { color: #ff7a1a; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.1; margin: 8px 0 12px; }
+  p { color: #9aa4ae; font-size: 18px; }
+  a { color: #ff7a1a; }
+</style>
 </head>
 <body>
 <div class="wrap">
-  <header style="padding-top:80px">
-    <div class="eyebrow">404</div>
-    <h1>Page not found</h1>
-    <p class="lede">That page doesn't exist. <a href="/">Go back to the portfolio.</a></p>
-  </header>
+  <div class="eyebrow">404</div>
+  <h1>Page not found</h1>
+  <p>That page doesn't exist. <a id="home" href="/">Go back to the portfolio.</a></p>
 </div>
+<script>
+  // On a GitHub Pages project site the portfolio lives under /<repo>/, not /.
+  if (location.hostname.endsWith('.github.io')) {
+    var seg = location.pathname.split('/')[1];
+    if (seg) document.getElementById('home').href = '/' + seg + '/';
+  }
+</script>
 </body>
 </html>
