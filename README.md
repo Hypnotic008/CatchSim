@@ -196,8 +196,21 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
 - **Cameras:** one continuous move from separation to the approach: a chase
   orbit through flip and boostback that swings up behind the booster to
   look down on it and ahead toward the Earth and the tower through the coast.
-  Then a cut to a long-lens ground tracking camera for the landing and
-  catch.
+  Then a cut to a long-lens tracking camera for the landing and catch. It
+  stands about 700 m out at tower-top height, so the lean and the turn-in
+  at the end of the burn are seen side-on rather than from below.
+- **Replays:** after the catch the landing is replayed from four more
+  cameras, then the video holds on the caught booster:
+
+  | Shot | Covers | Speed | Shows |
+  |---|---|---|---|
+  | Side view, square to the divert | ignition → catch | 1× | the lean, the divert and the return to vertical against the horizon |
+  | Overhead drone | last 18 s | 0.75× | the path onto the tower |
+  | Tower-top camera | last 9 s | 1× | the booster arriving |
+  | Arm camera | last 6 s | 0.5× | the toothed fins settling onto the catch carts |
+
+  The shots are listed in `quatsim/export3d.py` (`REPLAYS`), and the HUD
+  labels each one.
 - **HUD:** speed, altitude, engine diagram with a throttle gauge, an
   attitude sphere, and a mission timeline spaced by video time with a
   time-warp indicator.
