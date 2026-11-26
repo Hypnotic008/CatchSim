@@ -151,11 +151,24 @@ def test_export3d_frame_mapping_and_schedule():
     out = {"t": t, "r": np.column_stack([0 * t, 0 * t, alt]), "segment": list(seg),
            "n_lit": np.where(t < 20, 33, np.where(t < 262, 0, 13)),
            "throttle": np.where((t < 20) | (t >= 262), 0.8, 0.0)}
-    ft, fr = playback_schedule(out, fps=30, hold=2.0)
-    assert np.all(np.diff(ft) >= -1e-9)
+    ft, fr, shot = playback_schedule(out, fps=30, hold=2.0, replays=[])
+    assert np.all(np.diff(ft) >= -1e-9) and not shot.any()
     assert fr[np.searchsorted(ft, 10.0)] == pytest.approx(1.0, abs=0.05)   # boostback 1x
     assert fr[np.searchsorted(ft, 120.0)] == pytest.approx(12.0, rel=0.05)  # coast 12x
     assert fr[np.searchsorted(ft, 280.0)] == pytest.approx(1.0, abs=0.05)  # landing 1x
+    # replays: after the main flight and hold, each shot replays the end of
+    # the flight at its own rate, then a final hold on shot 0
+    out["landing_events"] = {"ignition_t": 262.0}
+    ft2, fr2, shot2 = playback_schedule(out, fps=30, hold=2.0,
+                                        replays=[(1, "A", "ign", 1.0), (2, "B", 6.0, 0.5)])
+    n0 = len(ft)
+    assert np.allclose(ft2[:n0], ft) and not shot2[:n0].any()
+    a1 = ft2[shot2 == 1]
+    assert a1[0] == pytest.approx(260.0, abs=0.05) and a1.max() == pytest.approx(t[-1])
+    b = ft2[shot2 == 2]
+    assert b[0] == pytest.approx(t[-1] - 6.0, abs=0.05)
+    assert np.sum(shot2 == 2) == pytest.approx(6.0 / 0.5 * 30 + 24, abs=2)
+    assert shot2[-1] == 0 and fr2[-1] == 0.0
 
 
 def test_landing_burn_downselects_13_5_3():

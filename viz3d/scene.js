@@ -987,7 +987,7 @@ function clock(t) {
   const s = Math.max(0, Math.floor(t)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
-function updateHud(st, rate, holdFrac) {
+function updateHud(st, rate, holdFrac, shot = 0) {
   const spd = st.v.length() * 3.6, alt = st.p.y / 1000;
   $('spd').innerHTML = `${fmt(spd)}<span class="u">KM/H</span>`;
   $('alt').innerHTML = alt >= 10 ? `${fmt(alt, 1)}<span class="u">KM</span>` : `${fmt(st.p.y)}<span class="u">M</span>`;
@@ -1005,7 +1005,11 @@ function updateHud(st, rate, holdFrac) {
   const t1 = M.t[N - 1];
   $('tldone').style.width = (100 * videoFrac(st.t)) + '%';
   M.events.forEach((e) => e.el.classList.toggle('past', e.t <= st.t + 1e-6));
-  if (holdFrac > 0) { $('warpx').textContent = '■'; $('warpsub').textContent = 'HOLD'; }
+  if (shot > 0) {
+    const name = (M.frames.shots || {})[String(shot)] || 'REPLAY';
+    $('warpx').textContent = 'REPLAY';
+    $('warpsub').textContent = `${name} · ${rate < 0.99 ? rate.toFixed(2).replace(/0$/, '') + '× SLOW MOTION' : '1× REAL TIME'}`;
+  } else if (holdFrac > 0) { $('warpx').textContent = '■'; $('warpsub').textContent = 'HOLD'; }
   else if (rate < 1.05) { $('warpx').textContent = '1×'; $('warpsub').textContent = 'REAL TIME'; }
   else { $('warpx').textContent = `${rate.toFixed(rate < 10 ? 1 : 0)}× ▸▸`; $('warpsub').textContent = 'FAST FORWARD'; }
   $('score').style.opacity = Math.min(1, holdFrac * 3).toFixed(3);
@@ -1027,7 +1031,10 @@ const tEnd = M.t[N - 1];
 const CAM_BEARING = THREE.MathUtils.degToRad(TWR.camera_bearing ??
   (Math.abs(TWR.facing_deg - 90) < 1 ? 205.7 : TWR.facing_deg - 30));
 const bearingWorld = (b, d, y) => new THREE.Vector3(TARGET.x + d * Math.sin(b), y, TARGET.z - d * Math.cos(b));
-const GROUND_CAM = bearingWorld(CAM_BEARING, 600, 18);
+// Raised to ~tower-top height (was 18 m) so the landing is seen side-on
+// rather than from below: the lean and the turn-in at the end of the burn
+// read against the horizon.
+const GROUND_CAM = bearingWorld(CAM_BEARING, 700, 120);
 const smooth = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
 const _v = new THREE.Vector3();
 
@@ -1053,9 +1060,56 @@ function flyCam(vt) {
   return K[K.length - 1];
 }
 
-function director(st, videoT, holdT) {
+// --- landing replays (shot ids from the exporter's REPLAYS) ---------------
+const P_IGN = stateAt(tIgn).p.clone();
+const APPROACH_DIR = (() => {
+  const d = new THREE.Vector3(TARGET.x - P_IGN.x, 0, TARGET.z - P_IGN.z);
+  return d.lengthSq() > 1 ? d.normalize() : new THREE.Vector3(1, 0, 0);
+})();
+// side of the approach path with the sun behind the camera
+const SIDE_DIR = (() => {
+  const n = new THREE.Vector3(-APPROACH_DIR.z, 0, APPROACH_DIR.x);
+  return n.dot(new THREE.Vector3(SUN_DIR.x, 0, SUN_DIR.z)) < 0 ? n.negate() : n;
+})();
+const SIDE_ANCHOR = P_IGN.clone().lerp(TARGET, 0.55).setY(0).addScaledVector(SIDE_DIR, 820);
+const frameFov = (dist, span) => THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(span / (2 * dist))), 6, 60);
+function replayCam(st, shot, shotT) {
+  const p = st.p;
+  const finPt = new THREE.Vector3(FIN_X, 0, 0).applyQuaternion(st.q).add(p);
+  camera.up.set(0, 1, 0);
+  if (shot === 1) {
+    // SIDE VIEW: square to the divert, camera height following the booster
+    // (lagging a little below it), so the lean, the divert and the turn back
+    // to vertical are seen side-on against the horizon.
+    camera.position.copy(SIDE_ANCHOR).setY(Math.max(30, 0.85 * p.y + 20));
+    const look = p.clone().lerp(TARGET.clone().setY(TARGET.y + 25), smooth(tEnd - 12, tEnd - 2, st.t) * 0.5);
+    camera.lookAt(look);
+    camera.fov = frameFov(camera.position.distanceTo(p), L_BOOSTER * 3.2);
+  } else if (shot === 2) {
+    // OVERHEAD: a drone high over the pad looking down on the booster and
+    // the tower: the lateral divert, the lean and the roll onto the arms.
+    camera.position.copy(TARGET).setY(340).addScaledVector(SIDE_DIR, 75).addScaledVector(APPROACH_DIR, -35);
+    camera.lookAt(p.clone().lerp(TARGET, 0.3));
+    camera.fov = frameFov(camera.position.distanceTo(p), L_BOOSTER * 2.2 + 30);
+  } else if (shot === 3) {
+    // TOWER CAM: on the front of the top frame, looking out at the incoming
+    // booster and down onto the arms as it settles.
+    camera.position.copy(towerWorld(TOWER_X + TW / 2 + 1.0, TH + 6.0, 2.0));
+    camera.lookAt(finPt.clone().lerp(p, 0.35));
+    camera.fov = THREE.MathUtils.lerp(58, 42, smooth(tEnd - 8, tEnd, st.t));
+  } else {
+    // ARM CAM: beside the mouth, just above the arms, on the fins and the
+    // catch carts as they meet.
+    camera.position.copy(towerWorld(6.0, ARM_Y + 7.0, -20.0));
+    camera.lookAt(finPt);
+    camera.fov = 38;
+  }
+}
+
+function director(st, videoT, holdT, shot = 0, shotT = 0) {
   const p = st.p;
   const nose = new THREE.Vector3(1, 0, 0).applyQuaternion(st.q);
+  if (shot > 0) { replayCam(st, shot, shotT); camera.updateProjectionMatrix(); return; }
   if (st.t < tApproach) {
     // ONE CONTINUOUS SHOT from separation to the approach: a chase orbit
     // through flip and boostback, then (with no cut) the camera swings up
@@ -1085,7 +1139,7 @@ function director(st, videoT, holdT) {
     camera.fov = THREE.MathUtils.clamp(THREE.MathUtils.lerp(fovTrack, fovCatch, w), 1.2, 45);
     if (holdT > 0) {                                       // slow push-in on the caught booster
       const k = smooth(0, 6, holdT);
-      camera.position.lerp(bearingWorld(CAM_BEARING - 0.06, 500, 22), k);
+      camera.position.lerp(bearingWorld(CAM_BEARING - 0.06, 520, 110), k);
       camera.fov = THREE.MathUtils.lerp(fovCatch, 16, k);
     }
     camera.up.set(0, 1, 0);
@@ -1185,7 +1239,7 @@ if (MODEL_CFG.tower !== false) {
 
 const armOpen = THREE.MathUtils.degToRad(38);
 const lastP = new THREE.Vector3();
-function drawAt(simT, rate, videoT, holdT) {
+function drawAt(simT, rate, videoT, holdT, shot = 0, shotT = 0) {
   const st = stateAt(simT);
   booster.position.copy(st.p);
   booster.quaternion.copy(st.q);
@@ -1217,7 +1271,7 @@ function drawAt(simT, rate, videoT, holdT) {
   // trail up to now, faded out near the ground cam where it would clutter
   const s = trailGeo.userData.step;
   trailGeo.setDrawRange(0, Math.max(2, Math.floor(st.i / s) + 1));
-  trail.material.opacity = st.t < tApproach ? 0.4 : 0.18;
+  trail.material.opacity = shot === 1 || shot === 2 ? 0.45 : (st.t < tApproach ? 0.4 : 0.18);
 
   if (controls && controls.enabled) {
     camera.position.add(_v.copy(st.p).sub(lastP));          // free camera rides along
@@ -1229,7 +1283,7 @@ function drawAt(simT, rate, videoT, holdT) {
     camera.position.set(top.x + d * Math.cos(el) * Math.cos(az), top.y + d * Math.sin(el),
                         top.z + d * Math.cos(el) * Math.sin(az));
     camera.up.set(0, 1, 0); camera.lookAt(top); camera.fov = 30; camera.updateProjectionMatrix();
-  } else director(st, videoT, holdT);
+  } else director(st, videoT, holdT, shot, shotT);
   lastP.copy(st.p);
 
   // environment uniforms
@@ -1247,7 +1301,7 @@ function drawAt(simT, rate, videoT, holdT) {
   miniBooster.quaternion.copy(st.q);
   attR.render(attScene, attCam);
 
-  updateHud(st, rate, holdT > 0 ? Math.min(1, holdT / 3) : 0);
+  updateHud(st, rate, holdT > 0 ? Math.min(1, holdT / 3) : 0, shot);
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,11 +1309,20 @@ function drawAt(simT, rate, videoT, holdT) {
 
 const F = M.frames;
 window.FRAME_COUNT = F.t.length;
+const SHOT = F.shot || F.t.map(() => 0);
+// start frame of the hold run / shot segment each frame belongs to
+const runStart = (same) => {
+  const out = new Int32Array(F.t.length);
+  for (let k = 0; k < F.t.length; k++) out[k] = k > 0 && same(k - 1, k) ? out[k - 1] : k;
+  return out;
+};
+const HOLD_START = runStart((a, b) => F.rate[a] === 0 && F.rate[b] === 0);
+const SHOT_START = runStart((a, b) => SHOT[a] === SHOT[b]);
 window.renderFrame = (k) => {
   k = Math.max(0, Math.min(F.t.length - 1, k));
-  const nHoldStart = F.rate.findIndex((r) => r === 0);
-  const holdT = nHoldStart >= 0 && k >= nHoldStart ? (k - nHoldStart) / F.fps : 0;
-  drawAt(F.t[k], F.rate[k], k / F.fps, holdT);
+  const holdT = F.rate[k] === 0 ? (k - HOLD_START[k]) / F.fps : 0;
+  const shot = SHOT[k] || 0;
+  drawAt(F.t[k], F.rate[k], k / F.fps, holdT, shot, (k - SHOT_START[k]) / F.fps);
   return true;
 };
 

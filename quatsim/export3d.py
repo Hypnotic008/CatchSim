@@ -21,8 +21,10 @@ Video time is not sim time. The rate (sim seconds per video second) is:
     last km before the landing burn       3x   (slower fast forward)
     landing burn + final approach + catch 1x   (real time)
 
-with smoothed transitions, then a hold on the caught booster. The schedule is
-computed here once, so the MP4 and the interactive viewer play identically.
+with smoothed transitions, then a hold on the caught booster, then REPLAYS
+of the landing from other cameras (shot ids, see REPLAYS), then a short final
+hold. The schedule is computed here once, so the MP4 and the interactive
+viewer play identically.
 """
 
 from __future__ import annotations
@@ -44,6 +46,17 @@ RATE_APPROACH = 3.0
 RATE_LANDING = 1.0
 APPROACH_ALTITUDE = 8_000.0
 
+# Landing replays after the catch: (shot id, name, start, sim-time rate).
+# start: "ign" = 2 s before landing-burn ignition, a number = seconds before
+# the catch. Shot 0 is the main broadcast camera.
+REPLAYS = [
+    (1, "SIDE VIEW", "ign", 1.0),
+    (2, "OVERHEAD", 18.0, 0.75),
+    (3, "TOWER CAM", 9.0, 1.0),
+    (4, "ARM CAM", 6.0, 0.5),
+]
+FINAL_HOLD = 3.0
+
 
 def to_three(p):
     p = np.asarray(p, float)
@@ -56,7 +69,7 @@ def _phase(out):
     return phase_index(out)
 
 
-def playback_schedule(out, fps=30, hold=6.0):
+def playback_schedule(out, fps=30, hold=6.0, replays=REPLAYS):
     t = np.asarray(out["t"], float)
     alt = np.asarray(out["r"])[:, 2]
     ph = _phase(out)
@@ -81,7 +94,27 @@ def playback_schedule(out, fps=30, hold=6.0):
     n_hold = int(hold * fps)
     ft = np.concatenate([ft, np.full(n_hold, t[-1])])
     fr = np.concatenate([fr, np.zeros(n_hold)])
-    return ft, fr
+    shot = np.zeros(len(ft), int)
+    le = out.get("landing_events", {}) or {}
+    t_ign = le.get("ignition_t", np.nan)
+    for sid, _, start, rate in replays or []:
+        if start == "ign":
+            if not np.isfinite(t_ign):
+                continue
+            t0 = float(t_ign) - 2.0
+        else:
+            t0 = float(t[-1]) - float(start)
+        seg = np.arange(max(t0, float(t[0])), float(t[-1]), rate / fps)
+        seg = np.concatenate([seg, np.full(int(0.8 * fps), t[-1])])   # beat at the catch
+        ft = np.concatenate([ft, seg])
+        fr = np.concatenate([fr, np.full(len(seg), rate)])
+        shot = np.concatenate([shot, np.full(len(seg), sid)])
+    if replays:
+        n_fin = int(FINAL_HOLD * fps)
+        ft = np.concatenate([ft, np.full(n_fin, t[-1])])
+        fr = np.concatenate([fr, np.zeros(n_fin)])
+        shot = np.concatenate([shot, np.zeros(n_fin, int)])
+    return ft, fr, shot
 
 
 def _tower_info(target) -> dict:
@@ -111,7 +144,7 @@ def export_mission(out: dict, target, report: dict | None, path: str,
         if np.dot(qo[i], qo[i - 1]) < 0:
             qo[i] = -qo[i]
 
-    ft, fr = playback_schedule(out, fps=fps)
+    ft, fr, shot = playback_schedule(out, fps=fps)
     le = out.get("landing_events", {})
     tgt = np.asarray(target, float)
     hist = out.get("boostback_history", [])
@@ -153,7 +186,9 @@ def export_mission(out: dict, target, report: dict | None, path: str,
         "prop": np.round(prop / 1000.0, 2).tolist(),
         "tilt": np.round(tilt, 3).tolist(),
         "frames": {"t": np.round(ft, 4).tolist(),
-                   "rate": np.round(fr, 3).tolist(), "fps": fps},
+                   "rate": np.round(fr, 3).tolist(), "fps": fps,
+                   "shot": shot.tolist(),
+                   "shots": {str(sid): name for sid, name, _, _ in REPLAYS}},
         "target": to_three(tgt).tolist(),
         "target_enu": tgt.tolist(),
         "events": events,
