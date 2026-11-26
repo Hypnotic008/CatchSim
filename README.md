@@ -309,6 +309,12 @@ What flying on the CFD aerodynamics took:
 - **13 → 5 on thrust alone:** the drop to 5 engines no longer counts aero
   drag as braking. At ignition that drag is large, but it falls away as the
   booster slows, and 5 engines then could not finish the brake.
+- **Entry steering sized to the CFD airframe:** turning a desired
+  sideways force into an angle of attack now uses the aero model's own
+  normal-force slope (from the table at the current Mach), and the same
+  600 kPa·° q·α cap bounds the commanded incidence. With CatchSim's 2.0 /rad
+  it over-steered the CFD airframe about 3×, and one dispersed case
+  (a 46 m/s jet stream) tumbled before ignition.
 - **Room to move while held:** while the corridor hold has the booster
   waiting above the arms, the lateral steering gets the lean and speed of a
   normal approach. Before, it crawled across at a few m/s until the

@@ -189,6 +189,17 @@ class CFDAeroModel(AeroModel):
         cd = self.db.coefficients(mach, 0.0, 0.0)["CD"] * self.cd_scale
         return -(self._q(speed, altitude) * cd * self.db.S) * (v / speed)
 
+    @property
+    def reference_area(self):
+        return self.db.S
+
+    def normal_force_slope(self, mach):
+        """Normal-force slope [per rad] on S_ref from the table near zero incidence, averaged
+        over the computed roll angles (for guidance)."""
+        a = float(self.db.aoa[1]) if len(self.db.aoa) > 1 else 4.0
+        cn = np.mean([self.db.coefficients(mach, a, r)["CN"] for r in self.db.roll])
+        return float(cn / np.sin(np.radians(a)))
+
     def airframe_moment(self, q, v_air, altitude, omega=None):
         """The full CFD moment about the centre of mass plus pitch damping (replaces the
         guessed weathercocking model). v_air is already relative to the air."""

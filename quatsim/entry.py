@@ -55,6 +55,10 @@ class EntryConfig:
     q_min: float = 1_500.0                # Pa, steering starts above this
     gain: float = 3.0                     # K in a = K miss / t_go^2
     alpha_max: float = np.radians(6.0)
+    # q-alpha cap, as in the landing guidance: commanded incidence within
+    # q_alpha_max / q (kPa deg). The CFD airframe is near-neutral at high
+    # dynamic pressure and tumbled at the incidence the old cap allowed.
+    q_alpha_max: float = 600.0
     fin_margin: float = 0.8               # fraction of fin torque to plan on
     period: float = 0.5                   # s between predictions
     t_go_floor: float = 4.0
@@ -106,9 +110,12 @@ class EntryGuidance:
         """Largest trim angle the fins can hold against weathercocking."""
         fin_max = self.fins.max_torque(mach, q_dyn) * self.cfg.fin_margin
         wc = self.cm_alpha * q_dyn * self.aero.reference_area * self.ref_length
+        cap = self.cfg.alpha_max
+        if self.cfg.q_alpha_max > 0.0 and q_dyn > 0.0:
+            cap = min(cap, np.radians(self.cfg.q_alpha_max / (q_dyn / 1e3)))
         if wc <= 0.0:
-            return self.cfg.alpha_max
-        return float(min(np.arcsin(min(fin_max / wc, 1.0)), self.cfg.alpha_max))
+            return cap
+        return float(min(np.arcsin(min(fin_max / wc, 1.0)), cap))
 
     # ------------------------------------------------------------------
 
@@ -163,8 +170,10 @@ class EntryGuidance:
             d = tail_first
             alpha = 0.0
         else:
+            cna = (self.aero.normal_force_slope(mach)
+                   if hasattr(self.aero, "normal_force_slope") else self.aero.cn_alpha)
             alpha = min(a_mag * m / (q_dyn * self.aero.reference_area
-                                     * self.aero.cn_alpha), alpha_lim)
+                                     * max(cna, 0.1)), alpha_lim)
             u = a / a_mag
             # Nose tilted AWAY from the desired force direction produces a
             # normal force TOWARD it (crossflow opposes v_perp).
