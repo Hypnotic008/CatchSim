@@ -133,6 +133,13 @@ class AeroModel:
     # entry possible, and it is dispersed in the Monte Carlo.
     cn_alpha: float = 2.0
 
+    def airframe_moment(self, q: np.ndarray, v_air: np.ndarray, altitude: float,
+                        omega: np.ndarray | None = None) -> np.ndarray:
+        """Aerodynamic moment of the airframe (weathercocking + damping),
+        body frame, N m. The CFD model (aero_cfd.CFDAeroModel) overrides it."""
+        return restoring_moment(q, v_air, altitude, omega=omega,
+                                density_scale=self.density_scale)
+
     def normal_force(self, q: np.ndarray, velocity: np.ndarray,
                      altitude: float) -> np.ndarray:
         """

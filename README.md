@@ -248,8 +248,10 @@ eased transitions and a 6 s hold on the caught booster.
   They had 11–12 m/s of wind, and the 3-engine final approach was still
   closing 10–20 m of error across the arms when the hull reached arm height.
   The terminal guidance now slows the descent in the 30 m above the arms
-  (down to a hover at arm height) whenever the error across the arms
-  exceeds 2 m. Holds last 3–6 s in those cases, and all three are now
+  whenever the error across the arms exceeds 2 m. It comes down to a hover
+  with the hull's lower end 8 m above the arms, never level with them, so a
+  booster that arrives far off slides in above the arms rather than into
+  them. Holds last 3–6 s in those cases, and all three are now
   caught with 2–2.5 m of hull clearance.
 - **13 → 5 → 3 landing burn (Flight 14).** The brake ignites on 13 engines
   and drops to 5 once five engines can finish the energy-matched brake with
@@ -283,6 +285,27 @@ Control derivatives:
   the per-fin moment derivatives from rocketcfd's deflected-fin sweeps
   (`cases/fin_control_export.py --base db_d0 --rudder db_rudder10:10
   --catch90 db_catch10:10`).
+
+## CFD aerodynamics
+
+`python run_mission.py --aero-cfd aero_db.json` flies on rocketcfd's
+aerodynamic tables (`cases/aero_database.py`) instead of the estimates in
+`quatsim/aero.py`, for both truth and guidance and in the Monte Carlo. It
+uses the drop-in `quatsim/aero_cfd.py`, and provides:
+- the full force at the actual angle of attack and roll
+- the full moment about the centre of mass, through `airframe_moment`, which
+  replaces the guessed weathercocking term
+- pitch damping, from the table's quasi-steady estimate
+
+The tables stop at 20° of incidence. Beyond that (the landing burn leans the
+booster up to ~30° off the wind), crossflow terms grow like sin α and the
+axial force like cos α from the last computed column, instead of freezing.
+
+As a check, a synthetic table built from CatchSim's own estimates
+(`tests/test_aero_cfd.py`) reproduces the default mission: ignition at
+1,402 m vs 1,399 m, and 63.5 t vs 64.0 t of propellant left.
+`--fin-cfd fin_control.json` adds the CFD fin derivatives (see Working grid
+fins).
 
 ## Modelling notes and honest limits
 

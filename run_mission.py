@@ -66,9 +66,24 @@ def report(out, n: int | None = None) -> dict:
                         corridor=tw, trajectory=out["r"])
 
 
+_CFD_DB = {}
+
+
+def make_aero(**kw):
+    """The aerodynamic model: CatchSim's estimates, or with CATCHSIM_AERO_CFD
+    (run_mission --aero-cfd) the rocketcfd table, for both truth and guidance."""
+    path = os.environ.get("CATCHSIM_AERO_CFD")
+    if not path:
+        return AeroModel(**kw)
+    from quatsim.aero_cfd import CFDAeroDatabase, CFDAeroModel
+    if path not in _CFD_DB:
+        _CFD_DB[path] = CFDAeroDatabase(path)
+    return CFDAeroModel(db=_CFD_DB[path], **kw)
+
+
 def build():
     vehicle = Vehicle(prop_mass=500e3)
-    aero = AeroModel()
+    aero = make_aero()
     # Three grid fins with their own deflections (rudder + catch pair).
     # CATCHSIM_FIN_CFD = fin_control.json from rocketcfd for CFD derivatives.
     fins = GridFinSet()
@@ -160,6 +175,9 @@ def main(argv=None):
     ap.add_argument("--tower", type=int, choices=(1, 2), default=TOWER_NUMBER,
                     help="catch tower: 2 = Tower 2, arms facing SSW (default);\n"
                          "1 = Tower 1, arms facing the ocean")
+    ap.add_argument("--aero-cfd", default=None, metavar="JSON",
+                    help="body aerodynamics from rocketcfd (aero_db.json from\n"
+                         "cases/aero_database.py) instead of the estimates")
     ap.add_argument("--fin-cfd", default=None, metavar="JSON",
                     help="grid fin control derivatives from rocketcfd\n"
                          "(fin_control.json from cases/fin_control_export.py)")
@@ -170,6 +188,8 @@ def main(argv=None):
     os.environ["CATCHSIM_TOWER"] = str(args.tower)
     if args.fin_cfd:
         os.environ["CATCHSIM_FIN_CFD"] = os.path.abspath(args.fin_cfd)
+    if args.aero_cfd:
+        os.environ["CATCHSIM_AERO_CFD"] = os.path.abspath(args.aero_cfd)
 
     os.makedirs("figs", exist_ok=True)
     t0 = time.time()

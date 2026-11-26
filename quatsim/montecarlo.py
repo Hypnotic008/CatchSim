@@ -186,8 +186,8 @@ def run_case(case: dict, dt: float = 0.02, keep_trajectory: bool = False,
                        jet_altitude=case["wind_jet_alt"],
                        direction_surface=case["wind_dir"],
                        veer=case["wind_veer"])
-    truth_a = AeroModel(cd_scale=case["k_cd"], density_scale=case["k_rho"],
-                        wind=wind)
+    truth_a = RM.make_aero(cd_scale=case["k_cd"], density_scale=case["k_rho"],
+                           wind=wind)
 
     seq.vehicle = truth_v
     seq.aero = truth_a
@@ -204,7 +204,7 @@ def run_case(case: dict, dt: float = 0.02, keep_trajectory: bool = False,
         w = _w(h) * fc_k
         return np.array([c_ * w[0] - s_ * w[1], s_ * w[0] + c_ * w[1], 0.0])
 
-    seq.gnc_aero = AeroModel(wind=forecast)
+    seq.gnc_aero = RM.make_aero(wind=forecast)
 
     x0 = dispersed_separation_state(sep, case)
     sep_truth = copy.copy(sep)

@@ -488,10 +488,8 @@ class FlightSequencer:
                 # it is a property of the airframe, not a control mode. This is
                 # what rotates the booster continuously from its boostback
                 # attitude to engines-first and then upright as it descends.
-                torque = torque + AERO.restoring_moment(
-                    s[D6.Q_SLICE], v_air, float(r[2]), omega=w,
-                    density_scale=self.aero.density_scale
-                )
+                torque = torque + self.aero.airframe_moment(
+                    s[D6.Q_SLICE], v_air, float(r[2]), omega=w)
                 forces = D6.Forces(thrust=thrust, torque=torque,
                                    mass_flow=mdot, drag=drag)
 
@@ -678,7 +676,7 @@ class FlightSequencer:
                 alpha_ref=a_ref)
         finally:
             ctrl.gains = saved
-        tau = tau - AERO.restoring_moment(q_ref, v_air, h)
+        tau = tau - self.gnc_aero.airframe_moment(q_ref, v_air, h)
         if isinstance(self.fins, AERO.GridFinSet):
             dt = 0.0 if self._fin_t is None else max(self._t_now - self._fin_t, 0.0)
             self._fin_t = self._t_now

@@ -183,13 +183,14 @@ class LandingConfig:
     # With Tower 2 the returning booster comes in ACROSS the open arms. If the
     # error across the arms is still larger than `corridor_halfwidth` when the
     # hull's lower end nears arm height, the descent is slowed in proportion
-    # to the remaining gap (down to a hover at arm height) until the lateral
+    # to the remaining gap (down to a hover `hold_margin` above the arms) until the lateral
     # law has lined the booster up between the arms. None = no corridor.
     corridor_across: np.ndarray | None = None   # unit (x, y) across the arms
     corridor_halfwidth: float = 2.0       # m, allowed across error at the arms
     arm_height: float = 140.0             # m, arm (hardpoint) height above ground
     hull_below_com: float = 30.0          # m, CoM to the lower end of the hull
-    hold_band: float = 30.0               # m above the arms where the hold acts
+    hold_band: float = 30.0               # m above the hold height where the hold acts
+    hold_margin: float = 8.0              # m, hull bottom held this far above the arms
     resume_accel: float = 1.5             # m/s^2, descent pick-up after a hold
 
 
@@ -404,7 +405,7 @@ class LandingGuidance:
         else:
             v_ref, t_go_v, in_flare = self._terminal_profile(h_left)
             if c.corridor_across is not None:
-                gap = h - c.hull_below_com - c.arm_height
+                gap = h - c.hull_below_com - c.arm_height - c.hold_margin
                 ax = np.asarray(c.corridor_across, float)
                 c_err = abs(float((r[:2] - tgt[:2]) @ ax))
                 if 0.0 < gap + 5.0 and gap < c.hold_band \
