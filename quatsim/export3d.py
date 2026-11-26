@@ -52,10 +52,8 @@ APPROACH_ALTITUDE = 8_000.0
 # ignition; default the catch. Shot 0 is the main broadcast camera.
 REPLAYS = [
     (5, "FIN CAM", "ign-15", 1.0, "ign"),
-    (1, "SIDE VIEW", "ign", 1.0),
-    (2, "OVERHEAD", 18.0, 0.75),
-    (3, "TOWER CAM", 9.0, 1.0),
-    (4, "ARM CAM", 6.0, 0.5),
+    (6, "FROM THE SEA", "ign-6", 1.0),
+    (7, "AERIAL", "ign", 1.0),
 ]
 FINAL_HOLD = 3.0
 

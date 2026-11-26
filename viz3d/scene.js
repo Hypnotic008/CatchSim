@@ -1160,6 +1160,14 @@ const SIDE_DIR = (() => {
   return n.dot(new THREE.Vector3(SUN_DIR.x, 0, SUN_DIR.z)) < 0 ? n.negate() : n;
 })();
 const SIDE_ANCHOR = P_IGN.clone().lerp(TARGET, 0.55).setY(0).addScaledVector(SIDE_DIR, 820);
+// sea-level camera: offshore along the approach (the booster comes in from
+// over the Gulf), a little to the sun side so the booster is lit
+const SEA_CAM = (() => {
+  const c = TARGET.clone().setY(0).addScaledVector(APPROACH_DIR, -3500).addScaledVector(SIDE_DIR, 900);
+  return c.setY(3.0);
+})();
+// aerial camera: 230 m up, 280 m out on the sun side of the tower
+const AERIAL_CAM = TARGET.clone().setY(230).addScaledVector(SIDE_DIR, 260).addScaledVector(APPROACH_DIR, -90);
 const frameFov = (dist, span) => THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(2 * Math.atan(span / (2 * dist))), 6, 60);
 function replayCam(st, shot, shotT) {
   const p = st.p;
@@ -1179,6 +1187,24 @@ function replayCam(st, shot, shotT) {
     camera.position.copy(TARGET).setY(340).addScaledVector(SIDE_DIR, 75).addScaledVector(APPROACH_DIR, -35);
     camera.lookAt(p.clone().lerp(TARGET, 0.3));
     camera.fov = frameFov(camera.position.distanceTo(p), L_BOOSTER * 2.2 + 30);
+  } else if (shot === 6) {
+    // FROM THE SEA: a long lens at sea level ~3.5 km offshore, the tower in
+    // the lower part of the frame and the booster flying in from above it.
+    // The frame eases down onto the tower as the booster comes in.
+    camera.position.copy(SEA_CAM);
+    const towerMid = towerWorld(TOWER_X, 85.0, 0.0);
+    const high = TARGET.clone().setY(Math.max(p.y, 250));
+    const look = towerMid.clone().lerp(high, 0.42 * (1 - smooth(tEnd - 14, tEnd - 2, st.t)));
+    camera.lookAt(look);
+    const span = Math.max(p.y * 1.35, 900);           // stays wide: the tower small in the frame
+    camera.fov = frameFov(camera.position.distanceTo(look), span);
+  } else if (shot === 7) {
+    // AERIAL: a drone holding 230 m up, ~280 m from the tower: it looks up at
+    // the booster coming in, follows it down past its own height, and ends
+    // looking down on the catch.
+    camera.position.copy(AERIAL_CAM);
+    camera.lookAt(p.clone().lerp(finPt, 0.5));
+    camera.fov = frameFov(camera.position.distanceTo(p), L_BOOSTER * 2.8);
   } else if (shot === 5) {
     // FIN CAM: riding on the booster beside a catch fin, looking up the hull
     // at it as the fins steer the entry (body frame, so the camera moves with

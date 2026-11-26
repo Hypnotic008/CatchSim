@@ -199,15 +199,13 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   Then a cut to a long-lens tracking camera for the landing and catch. It
   stands about 700 m out at tower-top height, so the lean and the turn-in
   at the end of the burn are seen side-on rather than from below.
-- **Replays:** after the catch the landing is replayed from four more
-  cameras, then the video holds on the caught booster:
-
-  | Shot | Covers | Speed | Shows |
-  |---|---|---|---|
-  | Side view, square to the divert | ignition → catch | 1× | the lean, the divert and the return to vertical against the horizon |
-  | Overhead drone | last 18 s | 0.75× | the path onto the tower |
-  | Tower-top camera | last 9 s | 1× | the booster arriving |
-  | Arm camera | last 6 s | 0.5× | the toothed fins settling onto the catch carts |
+- **Replays:** after the catch hold, three replays:
+  - FIN CAM: a camera riding on the booster through the 15 s of entry before
+    ignition, watching the grid fins steer
+  - FROM THE SEA: a long shot from sea level about 3.5 km offshore, with the
+    tower small on the horizon and the booster flying in
+  - AERIAL: a camera holding at 230 m that looks up at the booster during the
+    burn, follows it down, and ends looking down on the catch
 
   The shots are listed in `quatsim/export3d.py` (`REPLAYS`), and the HUD
   labels each one.
