@@ -286,6 +286,44 @@ Control derivatives:
   (`cases/fin_control_export.py --base db_d0 --rudder db_rudder10:10
   --catch90 db_catch10:10`).
 
+## Flight 15 profile (V3, CFD aerodynamics)
+
+`python run_mission.py --flight 15` flies the V3 booster as on Flight 15:
+- **Separation:** at 60 km (59–61 km reported), with the flight-path angle
+  fitted so the booster apogee comes out at 92.3 km (92.2 km flown).
+- **Aerodynamics:** the rocketcfd tables (`data/aero_db_v3.json`), including
+  each grid fin's authority from the database's per-fin lift slopes.
+- **Aim point:** the boostback aims 550 m offshore of the tower (200 m in the
+  default profile).
+
+The landing burn ignites at ~2.1 km and ~446 m/s (Flight 15: ~3 km, on an
+offshore divert), goes 13 → 5 at ~1.3 km and 5 → 3 at ~330 m, and the catch
+leaves ~37 t of propellant. `--flight 13`, the default, is the original
+calibration on the estimated aerodynamics.
+
+What flying on the CFD aerodynamics took:
+- **q·α limit:** the landing guidance keeps the thrust (and so the body)
+  within 600 kPa·° ÷ dynamic pressure of the relative wind. Leaning 30° into a
+  100 kPa airstream at a fast, high ignition tumbled the near-neutral CFD
+  airframe; the estimates were too stable to show it.
+- **13 → 5 on thrust alone:** the drop to 5 engines no longer counts aero
+  drag as braking. At ignition that drag is large, but it falls away as the
+  booster slows, and 5 engines then could not finish the brake.
+- **Room to move while held:** while the corridor hold has the booster
+  waiting above the arms, the lateral steering gets the lean and speed of a
+  normal approach. Before, it crawled across at a few m/s until the
+  propellant ran out.
+
+What the database says, against CatchSim's estimates:
+
+| | CFD | Estimate |
+|---|---|---|
+| Drag coefficient at zero incidence | 1.2–1.95 | ~2× higher (fin factor 2.0) |
+| Normal-force slope | 4.6–6.5 /rad | 2.0 /rad |
+| Engines-first stability | near-neutral (restoring −0.18…+0.14 at 8°) | stable |
+| Pitch damping (`cm_q`) | 0.4–1.2 | 12 |
+| Fin authority | 4–7× the placeholder, strongest at Mach 0.8–1.1 (no transonic dip) | placeholder |
+
 ## CFD aerodynamics
 
 `python run_mission.py --aero-cfd aero_db.json` flies on rocketcfd's

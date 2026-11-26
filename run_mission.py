@@ -46,6 +46,24 @@ T33_BURN = 9.1472         # s on 33 engines
 BB_ELEVATION = 1.0        # deg above horizontal on the retrograde axis
 TARGET = np.array([0.0, 0.0, 105.0])
 
+# Hot-stage separation (estimates; see build()).
+SEPARATION = dict(altitude=68e3, downrange=83e3, speed=1500.0,
+                  flight_path_angle=25.0, prop_remaining=500e3)
+
+# Flight profiles (--flight). 13: the V2-era calibration this sim was built on
+# (separation 68 km, CatchSim's estimated aerodynamics). 15: V3 as flown on
+# Flight 15 -- separation ~60 km and booster apogee 92.2 km (flight-path angle
+# fitted to the apogee), on the rocketcfd aerodynamic tables
+# (data/aero_db_v3.json), with the boostback aim point further offshore: with
+# the q-alpha limit the brake cannot lean hard at high dynamic pressure, so the
+# booster carries its horizontal speed further and must start further out.
+# Flight 15 ignited the landing burn at ~3 km; this profile ignites at ~2.1 km.
+FLIGHTS = {
+    13: dict(separation={}, aero=None, aim_x=200.0),
+    15: dict(separation=dict(altitude=60e3, flight_path_angle=20.7),
+             aero="data/aero_db_v3.json", aim_x=550.0),
+}
+
 # Which Starbase tower catches the booster: 2 (default; arms open to the
 # south-southwest, so the booster coming home from the east approaches across
 # the arms) or 1 (arms open to the ocean). CATCHSIM_TOWER lets worker
@@ -95,8 +113,7 @@ def build():
     # Separation state calibrated against Flight 13: downrange fitted to the
     # 51 km splashdown, which then independently predicted the measured 11 s
     # boostback.
-    sep = SeparationState(altitude=68e3, downrange=83e3, speed=1500.0,
-                          flight_path_angle=25.0, prop_remaining=500e3)
+    sep = SeparationState(**SEPARATION)
 
     sf = propagate_flip(vehicle, aero, sep, FLIP_DURATION, n_lit=5)
     bb0 = solve_boostback(vehicle, aero, sep, start_state=sf,
@@ -118,7 +135,20 @@ def build():
 # on it, and the landing burn performs the final divert in. The predictive
 # boostback now hits this point to within a few metres, so it is a design
 # choice rather than a calibration fudge.
-AIM_X_1200 = 200.0
+AIM_X_1200 = float(os.environ.get("CATCHSIM_AIM_X", "200.0"))
+
+
+def apply_flight(n: int):
+    """Set the module's separation state and aim point for a flight profile
+    (also called in Monte Carlo workers via CATCHSIM_FLIGHT)."""
+    global AIM_X_1200
+    prof = FLIGHTS[int(n)]
+    SEPARATION.update(prof["separation"])
+    AIM_X_1200 = prof["aim_x"]
+
+
+if os.environ.get("CATCHSIM_FLIGHT"):
+    apply_flight(int(os.environ["CATCHSIM_FLIGHT"]))
 
 
 def landing_config() -> LandingConfig:
@@ -129,7 +159,8 @@ def landing_config() -> LandingConfig:
 
 
 def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
-        aim_x=AIM_X_1200, landing=None, steer=True):
+        aim_x=None, landing=None, steer=True):
+    aim_x = AIM_X_1200 if aim_x is None else aim_x
     bb = dict(bb0)
     bb["duration"] = t33 + 6.0
     segs = build_mission(vehicle, aero, sep, bb, land, TARGET, np.zeros(3),
@@ -177,6 +208,10 @@ def main(argv=None):
     ap.add_argument("--tower", type=int, choices=(1, 2), default=TOWER_NUMBER,
                     help="catch tower: 2 = Tower 2, arms facing SSW (default);\n"
                          "1 = Tower 1, arms facing the ocean")
+    ap.add_argument("--flight", type=int, choices=sorted(FLIGHTS), default=13,
+                    help="flight profile: 13 = separation 68 km on the estimated\n"
+                         "aerodynamics (default); 15 = V3 / Flight 15 (separation\n"
+                         "60 km, apogee ~92 km) on the CFD aerodynamic tables")
     ap.add_argument("--aero-cfd", default=None, metavar="JSON",
                     help="body aerodynamics from rocketcfd (aero_db.json from\n"
                          "cases/aero_database.py) instead of the estimates")
@@ -190,8 +225,12 @@ def main(argv=None):
     os.environ["CATCHSIM_TOWER"] = str(args.tower)
     if args.fin_cfd:
         os.environ["CATCHSIM_FIN_CFD"] = os.path.abspath(args.fin_cfd)
-    if args.aero_cfd:
-        os.environ["CATCHSIM_AERO_CFD"] = os.path.abspath(args.aero_cfd)
+    prof = FLIGHTS[args.flight]
+    os.environ["CATCHSIM_FLIGHT"] = str(args.flight)
+    apply_flight(args.flight)
+    if args.aero_cfd or prof["aero"]:
+        here = os.path.dirname(os.path.abspath(__file__))
+        os.environ["CATCHSIM_AERO_CFD"] = os.path.abspath(args.aero_cfd or os.path.join(here, prof["aero"]))
 
     os.makedirs("figs", exist_ok=True)
     t0 = time.time()

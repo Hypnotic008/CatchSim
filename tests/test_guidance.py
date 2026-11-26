@@ -218,3 +218,15 @@ def test_corridor_hold_slows_descent_when_not_lined_up_with_the_arms():
     held = LandingConfig(corridor_across=across, arm_height=140.0)
     assert cmd(held, 10.0).throttle > cmd(base, 10.0).throttle + 0.02
     assert cmd(held, 0.5).throttle == pytest.approx(cmd(base, 0.5).throttle)
+
+
+def test_q_alpha_cone_keeps_thrust_near_the_wind():
+    from quatsim.landing import _limit_cone
+    axis = np.array([0.0, 0.0, 1.0])
+    f = np.array([10.0, 0.0, 10.0])                      # 45 deg off
+    g = _limit_cone(f, axis, np.radians(10.0))
+    assert np.linalg.norm(g) == pytest.approx(np.linalg.norm(f))
+    assert np.degrees(np.arccos(g @ axis / np.linalg.norm(g))) == pytest.approx(10.0)
+    assert g[1] == pytest.approx(0.0) and g[0] > 0
+    inside = np.array([1.0, 0.0, 10.0])                  # already inside: unchanged
+    assert _limit_cone(inside, axis, np.radians(10.0)) == pytest.approx(inside)

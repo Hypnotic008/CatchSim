@@ -107,6 +107,13 @@ class LandingConfig:
     # law keeps flying with headroom left for the lateral divert. 0 = old 13 -> 3.
     n_mid: int = 5
     mid_frac: float = 0.80
+    # q-alpha limit: the thrust (and so the body) stays within
+    # q_alpha_max / q of the relative wind, so a fast, high-q ignition does not
+    # lean the booster 30+ deg into a 100 kPa airstream. With the CFD
+    # aerodynamics (near-neutral stability, large normal force) that lean
+    # tumbled it. 0 = off.
+    q_alpha_max: float = 600.0          # kPa * deg
+    alpha_min: float = np.radians(3.0)
     hard13_frac: float = 0.85        # 13-engine brake level while 5 cannot yet cope
     n_terminal: int = 3
     throttle_floor: float = 0.40          # Raptor deep-throttle floor
@@ -192,6 +199,7 @@ class LandingConfig:
     hold_band: float = 30.0               # m above the hold height where the hold acts
     hold_margin: float = 8.0              # m, hull bottom held this far above the arms
     resume_accel: float = 1.5             # m/s^2, descent pick-up after a hold
+    hold_tgo: float = 12.0                # s, lateral time-to-go allowed while held
 
 
 @dataclass
@@ -223,6 +231,22 @@ def _limit_tilt(f: np.ndarray, max_tilt: float) -> np.ndarray:
     if nh > lim:
         fh = fh * (lim / nh)
     return np.array([fh[0], fh[1], fz])
+
+
+def _limit_cone(f: np.ndarray, axis: np.ndarray, alpha: float) -> np.ndarray:
+    """Turn f (same magnitude) into the cone of half-angle alpha about the unit
+    vector axis, if it lies outside it."""
+    n = float(np.linalg.norm(f))
+    if n < 1e-9:
+        return f
+    c = float(f @ axis) / n
+    if c >= np.cos(alpha):
+        return f
+    perp = f - float(f @ axis) * axis
+    pn = float(np.linalg.norm(perp))
+    if pn < 1e-9:
+        return n * axis
+    return n * (np.cos(alpha) * axis + np.sin(alpha) * perp / pn)
 
 
 def _rotate_about(v: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
@@ -357,8 +381,11 @@ class LandingGuidance:
             # energy-matched brake fits in mid_frac of 5-engine authority,
             # then 8 shut down (for good) and the 5 fly the same law.
             if c.n_mid and self.n_lit == c.n_brake:
+                # thrust alone, no credit for drag: at a fast, high ignition the drag is
+                # large but falls away as the booster slows, and 5 engines must finish the
+                # brake without it
                 a5 = (c.mid_frac * self.vehicle.axial_thrust(c.n_mid, 1.0) / m
-                      - ENV.G0 + float(drag[2]) / m)
+                      - ENV.G0)
                 if a_z <= a5:
                     self.n_lit = c.n_mid
                     self.mid_alt = h
@@ -404,6 +431,7 @@ class LandingGuidance:
             floor = c.throttle_floor
         else:
             v_ref, t_go_v, in_flare = self._terminal_profile(h_left)
+            held = False
             if c.corridor_across is not None:
                 gap = h - c.hull_below_com - c.arm_height - c.hold_margin
                 ax = np.asarray(c.corridor_across, float)
@@ -415,6 +443,11 @@ class LandingGuidance:
                         v_ref, in_flare = v_cap, False
                         if self._t_prev is not None:
                             self.hold_time += t - self._t_prev
+                    # while held, steer across with the room of a normal approach
+                    # (the profile's time-to-go near the arms would close the lean
+                    # envelope and crawl the booster across at a few m/s)
+                    t_go_v = max(t_go_v, c.hold_tgo)
+                    held = True
             # Feed-forward is the profile's own deceleration along the
             # ACTUAL descent: d(v_ref)/dt = a_flare * |vz| / v_ref. A constant
             # a_flare here held a stopped vehicle 0.1 m above the catch plane
@@ -446,9 +479,14 @@ class LandingGuidance:
                 # seconds grows like tau^2; a constant a_d over-promised it
                 # and a windy handover overshot the tower by 15 m.
                 tau = max(t_go_v - c.settle_time - c.term_lat_lag, 0.0)
-                sp = min(np.sqrt(2.0 * a_d * d), d / c.term_lat_tau,
-                         a_d * max(t_go_v - c.settle_time, 0.0),
-                         c.term_stop_frac * self._envelope_stop(f_z_est, tau))
+                if held:
+                    # descent paused: only "able to stop at the target" applies,
+                    # not the time left before the settle window
+                    sp = min(np.sqrt(2.0 * a_d * d), d / c.term_lat_tau)
+                else:
+                    sp = min(np.sqrt(2.0 * a_d * d), d / c.term_lat_tau,
+                             a_d * max(t_go_v - c.settle_time, 0.0),
+                             c.term_stop_frac * self._envelope_stop(f_z_est, tau))
                 v_des = -e / d * sp
             else:
                 v_des = np.zeros(2)
@@ -469,6 +507,14 @@ class LandingGuidance:
         a_des = np.array([a_xy[0], a_xy[1], a_z])
         f = a_des - g_vec - drag / m                 # required specific force
         f = _limit_tilt(f, max_tilt)
+        if c.q_alpha_max > 0.0:
+            v_air = self.aero.air_velocity(v, h)
+            sp = float(np.linalg.norm(v_air))
+            if sp > 1.0:
+                q_kpa = 0.5 * ENV.density(h) * sp * sp / 1e3
+                a_lim = max(np.radians(c.q_alpha_max / max(q_kpa, 1e-6)), c.alpha_min)
+                if a_lim < np.pi / 2:
+                    f = _limit_cone(f, -v_air / sp, a_lim)
 
         # Throttle: vertical first. If the full vector exceeds what the
         # engines can give, shed horizontal demand rather than vertical.
