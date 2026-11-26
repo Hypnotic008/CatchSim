@@ -200,8 +200,8 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   stands about 700 m out at tower-top height, so the lean and the turn-in
   at the end of the burn are seen side-on rather than from below.
 - **Replays:** after the catch hold, three replays:
-  - FIN CAM: a camera riding on the booster through the 15 s of entry before
-    ignition, watching the grid fins steer
+  - SIDE VIEW: a camera square to the divert, from ignition to the catch,
+    showing the lean, the divert and the return to vertical
   - FROM THE SEA: a long shot from sea level about 3.5 km offshore, with the
     tower small on the horizon and the booster flying in
   - AERIAL: a camera holding at 230 m that looks up at the booster during the
@@ -275,8 +275,8 @@ deliver.
 The deflections are logged (`fin_deflection`), plotted by `--figures` in
 `figs/grid_fins.png` (each fin through the entry, alongside dynamic pressure
 and altitude), shown in a GRID FINS gauge on the HUD, and animated in the 3-D
-viewer. The replays open with a FIN CAM shot, from a camera riding on the
-booster, covering the 15 s of entry before ignition.
+viewer. (A FIN CAM shot riding on the booster is still in the viewer, as
+shot 5; it is not in the default replay list.)
 
 Control derivatives:
 - **Default:** the old placeholder authority, per fin. The catch pair's pitch

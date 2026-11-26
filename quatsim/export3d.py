@@ -51,7 +51,7 @@ APPROACH_ALTITUDE = 8_000.0
 # a number = seconds before the catch. end (optional): "ign" = 2 s after
 # ignition; default the catch. Shot 0 is the main broadcast camera.
 REPLAYS = [
-    (5, "FIN CAM", "ign-15", 1.0, "ign"),
+    (1, "SIDE VIEW", "ign", 1.0),
     (6, "FROM THE SEA", "ign-6", 1.0),
     (7, "AERIAL", "ign", 1.0),
 ]

@@ -311,6 +311,9 @@ class GridFinSet:
     L_ref: float = 72.3                # CFD reference length, m
     cfd: dict | None = None            # per-fin tables, see load_cfd
     cfd_source: str = ""
+    # per-fin lift slope from the CFD aero database (aero_db.json fin_cn_alpha): (Mach, per rad on
+    # S_ref). Used as each fin's control derivative until deflected-fin sweeps (load_cfd) exist.
+    fin_slope: tuple | None = None
 
     @property
     def deflection_limit(self) -> float:
@@ -342,6 +345,22 @@ class GridFinSet:
         self.cfd_source = path
         return self
 
+    def load_aero_db(self, path: str) -> "GridFinSet":
+        """Per-fin authority from the aero database's fin lift slopes: deflecting a fin about its
+        hinge changes its local incidence, so its control derivative ~ its own lift slope."""
+        with open(path) as fh:
+            d = json.load(fh)
+        fa = d.get("fin_cn_alpha")
+        if not fa:
+            raise ValueError(f"{path}: no fin_cn_alpha (rebuild it with rocketcfd's catchsim_export)")
+        pairs = [(m, v) for m, v in zip(fa["mach"], fa["per_rad"]) if v is not None]
+        self.fin_slope = (np.array([p[0] for p in pairs], float), np.array([p[1] for p in pairs], float))
+        ref = d.get("reference", {})
+        self.S_ref = float(ref.get("S_ref", self.S_ref))
+        self.L_ref = float(ref.get("L_ref", self.L_ref))
+        self.cfd_source = path + " (fin lift slopes)"
+        return self
+
     def _cfd_column(self, name, mach, aoa_deg, roll_deg):
         T = self.cfd[name]
         # nearest computed (aoa, roll), then linear in Mach
@@ -367,8 +386,11 @@ class GridFinSet:
                 B[:, k] = q_dyn * self.S_ref * self.L_ref * self._cfd_column(
                     name, mach, aoa_deg, roll_deg)
             return B
-        F = (self.base.cn_delta * self.base.effectiveness(mach) * q_dyn
-             * self.base.area_per_fin)
+        if self.fin_slope is not None:
+            F = float(np.interp(mach, *self.fin_slope)) * q_dyn * self.S_ref
+        else:
+            F = (self.base.cn_delta * self.base.effectiveness(mach) * q_dyn
+                 * self.base.area_per_fin)
         ex = np.array([1.0, 0.0, 0.0])
         for k, az in enumerate(FIN_AZIMUTHS_DEG):
             rad = fin_radial(az)

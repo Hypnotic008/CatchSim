@@ -89,6 +89,8 @@ def build():
     fins = GridFinSet()
     if os.environ.get("CATCHSIM_FIN_CFD"):
         fins.load_cfd(os.environ["CATCHSIM_FIN_CFD"])
+    elif os.environ.get("CATCHSIM_AERO_CFD"):
+        fins.load_aero_db(os.environ["CATCHSIM_AERO_CFD"])
 
     # Separation state calibrated against Flight 13: downrange fitted to the
     # 51 km splashdown, which then independently predicted the measured 11 s
