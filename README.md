@@ -298,7 +298,10 @@ Control derivatives:
 
 The landing burn ignites at ~2.1 km and ~446 m/s (Flight 15: ~3 km, on an
 offshore divert), goes 13 → 5 at ~1.3 km and 5 → 3 at ~330 m, and the catch
-leaves ~37 t of propellant. `--flight 13`, the default, is the original
+leaves ~37 t of propellant. Monte Carlo (40 dispersed cases + nominal,
+`figs/monte_carlo_flight15.png`): 41/41 caught, ignition 1.5–3.0 km, at
+least 3.1 m of hull clearance, 12.6–~45 t of propellant left (median 31 t).
+The default profile on the same code: 41/41, at least 50 t left. `--flight 13`, the default, is the original
 calibration on the estimated aerodynamics.
 
 What flying on the CFD aerodynamics took:
