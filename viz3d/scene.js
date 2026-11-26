@@ -508,7 +508,11 @@ const azYZ = (deg, r) => [-r * Math.sin(THREE.MathUtils.degToRad(deg)), r * Math
     f.position.set(FIN_X, 0, R_BOOSTER);
     const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.3, 32), finMat);
     pod.rotation.x = Math.PI / 2; pod.position.set(FIN_X, 0, R_BOOSTER + 0.1);
-    piv.add(f, pod); booster.add(piv);
+    // actuator fairing below the fin: a dark half-cone tapering down the hull
+    const fair = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.12, 2.6, 24, 1, false, -Math.PI / 2, Math.PI), finMat);
+    fair.rotation.z = -Math.PI / 2;                // axis along body x: wide end at the fin, apex aft
+    fair.position.set(FIN_X - 1.6, 0, R_BOOSTER - 0.05);
+    piv.add(f, pod, fair); booster.add(piv);
   }
   // catch hardpoints below the fin pair
   for (const deg of [90, 270]) {
@@ -730,6 +734,23 @@ const BASE_H = 18.0, CLAD_TOP = 58.0, TOP_FRAME = 11.0;
   }
   top.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   towerRig.add(top);
+  // propellant and gas lines up the back face, with clamp bands
+  const pipeMat = new THREE.MeshStandardMaterial({ color: 0xc9ccce, metalness: 0.75, roughness: 0.3 });
+  const pipes = new THREE.Group();
+  for (const [dz, r] of [[-2.4, 0.55], [-1.1, 0.45], [0.1, 0.45], [1.2, 0.3], [2.1, 0.3]]) {
+    const pp = new THREE.Mesh(new THREE.CylinderGeometry(r, r, TH - 8, 14), pipeMat);
+    pp.position.set(TOWER_X - hs - 0.9, (TH - 8) / 2 + 4, dz); pipes.add(pp);
+  }
+  for (let y = 12; y < TH - 6; y += 8) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 6.0), darkMat);
+    band.position.set(TOWER_X - hs - 0.9, y, -0.2); pipes.add(band);
+  }
+  pipes.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  towerRig.add(pipes);
+  // aircraft warning beacon on the mast
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.45, 16, 8),
+    new THREE.MeshStandardMaterial({ color: 0xff2a1a, emissive: 0xff2a1a, emissiveIntensity: 2.5 }));
+  beacon.position.set(TOWER_X, TH + TOP_FRAME + 12.3, 0); towerRig.add(beacon);
 }
 
 // chopsticks: a framed carriage wrapped round three faces of the tower,
@@ -751,6 +772,10 @@ const carriage = new THREE.Group();
       roller.rotation.x = Math.PI / 2; roller.position.set(FACE_X - 0.4, yy, sd * (TW / 2 + 0.2));
       carriage.add(roller);
     }
+  }
+  for (const sd of [1, -1]) {                           // brackets under the arm roots
+    strut(carriage, V3(FACE_X + 1.6, -ch + 3.5, sd * 4.2), V3(FACE_X + 2.5 + 0.2, -8.2, sd * 5.9), 0.8, towerMat);
+    strut(carriage, V3(FACE_X + 1.6, -ch + 3.5, sd * 4.2), V3(FACE_X + 1.6, 1.5, sd * 4.2), 0.7, towerMat);
   }
   carriage.children.forEach((c) => { c.castShadow = true; c.receiveShadow = true; });
   carriage.position.set(0, ARM_Y, 0);
@@ -831,11 +856,39 @@ for (const side of [+1, -1]) {
 // tank farm and a few buildings for scale
 {
   const tankMat = new THREE.MeshStandardMaterial({ color: 0xd9dbdc, metalness: 0.6, roughness: 0.35 });
-  for (let k = 0; k < 8; k++) {
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 26 + 6 * (k % 3), 40), tankMat);
-    t.position.set(TARGET.x - 174 - (k % 4) * 13, (26 + 6 * (k % 3)) / 2, -60 + Math.floor(k / 4) * 14);
-    t.castShadow = true; scene.add(t);
+  const farm = new THREE.Group();
+  // two rows of tall vertical tanks with domed heads
+  for (let k = 0; k < 10; k++) {
+    const h = 28 + 4 * (k % 2), r = 4.2;
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 40), tankMat);
+    const x = -(k % 5) * 12, z = Math.floor(k / 5) * 13;
+    t.position.set(x, h / 2, z); farm.add(t);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 12, 0, 2 * Math.PI, 0, Math.PI / 2), tankMat);
+    dome.scale.y = 0.45; dome.position.set(x, h, z); farm.add(dome);
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.6, r + 0.6, 0.4, 32, 1, true), darkMat);
+    ring.position.set(x, h - 1, z); farm.add(ring);                   // walkway ring
   }
+  // horizontal bullet tanks on saddles
+  for (let k = 0; k < 4; k++) {
+    const t = new THREE.Mesh(new THREE.CapsuleGeometry(3.0, 22, 8, 32), tankMat);
+    t.rotation.z = Math.PI / 2; t.position.set(-24, 5.2, 34 + k * 8); farm.add(t);
+    for (const dx of [-8, 8]) {
+      const sad = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3, 5), concreteMat);
+      sad.position.set(-24 + dx, 1.5, 34 + k * 8); farm.add(sad);
+    }
+  }
+  // pipe rack from the farm toward the pad
+  for (let k = 0; k < 3; k++) {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 120, 12), tankMat);
+    pipe.rotation.z = Math.PI / 2; pipe.position.set(66, 7 + k * 1.1, -14 + k * 1.2); farm.add(pipe);
+  }
+  for (let x = 10; x < 126; x += 12) {
+    const bent = new THREE.Mesh(new THREE.BoxGeometry(0.5, 9, 4), darkMat);
+    bent.position.set(x, 4.5, -12.8); farm.add(bent);
+  }
+  farm.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  farm.position.set(TARGET.x - 180, 0, TARGET.z - 70);
+  scene.add(farm);
   const bMat = new THREE.MeshStandardMaterial({ color: 0x8c8a86, roughness: 0.85 });
   for (const [x, z, w, h, d] of [[-420, 90, 60, 14, 35], [-520, -40, 40, 22, 40], [-610, 150, 90, 10, 30]]) {
     const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bMat);
