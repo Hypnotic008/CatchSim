@@ -212,7 +212,7 @@ def run_case(case: dict, dt: float = 0.02, keep_trajectory: bool = False,
 
     out = RM.fly(RM.T33_BURN, vehicle, aero, sep_truth, bb0, land, seq,
                  dt=dt, log_every=log_every)
-    rep = catch_report(out["state"][-1], RM.TARGET)
+    rep = RM.report(out)
 
     row = {k: v for k, v in case.items() if k != "d_rate"}
     row.update({f"d_rate_{a}": case["d_rate"][i]

@@ -541,6 +541,7 @@ def build_mission(
     bb_13_duration: float = 3.0,
     bb_3_duration: float = 3.0,
     boostback_elevation: float = 0.0,   # rad above horizontal, +ve = lofted
+    catch_axis: np.ndarray | None = None,  # rudder-fin direction at the catch
 ) -> list[Segment]:
     """
     Assemble the full segment list from the solved burn parameters.
@@ -625,14 +626,17 @@ def build_mission(
                            np.zeros(3), boostback.get("prop_after", 0.0))
         _, v_ei, _, _ = _propagate_ballistic(vehicle, aero, bo, 55_000.0,
                                              dt=0.1)
-    # ROLL: the middle grid fin (body +z) is the rudder and trails on the
-    # downrange side, pointing +x -- away from the tower. Set it here, in the
+    # ROLL: the middle grid fin (body +z) is the rudder and must point away
+    # from the tower at the catch (`catch_axis`: +x for an ocean-facing tower,
+    # roughly south for Tower 2). Set it here, in the
     # unhurried vacuum reorient, so the roll is already the catch roll and
     # stays locked through entry and the landing burn. (The default 'up' roll
     # reference put the rudder on the tower side, and the booster then had to
     # roll 180 deg during the final approach.)
     q_entry = attitude_from_pointing(-np.asarray(v_ei, float),
-                                     roll_reference=np.array([1.0, 0.0, 0.0]))
+                                     roll_reference=(np.array([1.0, 0.0, 0.0])
+                                                     if catch_axis is None
+                                                     else np.asarray(catch_axis, float)))
     reorient_seg = Segment("reorient", Mode.COAST, n_lit=0, n_gimballing=0,
                            duration=reorient_duration)
     reorient_seg.q_slew = Slew(q_retro, q_entry, 0.0, reorient_duration,

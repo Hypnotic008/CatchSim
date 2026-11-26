@@ -83,7 +83,7 @@ hand-over vertical speed   8 m/s downward
 brake margin              0.40
 terminal taper            145 m
 terminal throttle floor   0.34
-13 -> 3 engine transition at handover
+13 -> 5 engines in the brake, 5 -> 3 at handover (as of Flight 14)
 ```
 
 One end-to-end run at `dt=0.02` gives:

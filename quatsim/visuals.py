@@ -146,8 +146,11 @@ def _events(out: dict) -> dict:
     le = out.get("landing_events", {})
     if le and np.isfinite(le.get("ignition_t", np.nan)):
         ev["landing ignition"] = le["ignition_t"]
+    if le and np.isfinite(le.get("mid_t", np.nan)):
+        ev["13 -> 5 engines"] = le["mid_t"]
     if le and np.isfinite(le.get("handover_t", np.nan)):
-        ev["13 -> 3 engines"] = le["handover_t"]
+        ev[("5" if np.isfinite(le.get("mid_t", np.nan)) else "13")
+           + " -> 3 engines"] = le["handover_t"]
     return ev
 
 
@@ -320,22 +323,33 @@ def _booster_outline_xz(r, q, length=72.3, radius=4.5, com_frac=0.40):
 HARDPOINT_ABOVE_COM = (1.0 - 0.40) * 72.3 - 8.0
 
 
-def tower_xz(target, height=146.0, width=12.0, arm_reach=15.0):
-    """Tower structure placed so the chopstick arm tips close on the target.
-    Returns (lattice segments, arm segments) in the x-z plane, metres. The
-    arms are drawn at hardpoint height: target (CoM) + HARDPOINT_ABOVE_COM."""
-    tx, tz = float(target[0]), float(target[2]) + HARDPOINT_ABOVE_COM
-    face = tx - arm_reach                  # tower face, toward -x
-    x0, x1 = face - width, face
-    segs = [[(x0, 0), (x0, height)], [(x1, 0), (x1, height)],
-            [(x0, height), (x1, height)]]
+def tower_xz(target, height=146.0, width=12.0, arm_reach=None, tower=None):
+    """Side view (x-z plane, looking north) of the selected tower, rotated to
+    its real heading. Returns (lattice segments, arm segments) in metres. The
+    arms are drawn at hardpoint height: target (CoM) + HARDPOINT_ABOVE_COM.
+    Tower 1 shows its arms in profile reaching toward +x; Tower 2's arms run
+    almost straight away from the viewer, so they appear end-on, either side
+    of the catch point, with the tower standing behind it."""
+    from .tower import current_tower
+    tgt = np.asarray(target, float)
+    tw = tower if tower is not None else current_tower(tgt)
+    corners = [tw._xyz(a, c, 0.0)[0] for a in (-0.5 * tw.width, 0.5 * tw.width)
+               for c in (-0.5 * tw.width, 0.5 * tw.width)]
+    x0, x1 = min(corners), max(corners)
+    h = tw.height
+    segs = [[(x0, 0), (x0, h)], [(x1, 0), (x1, h)], [(x0, h), (x1, h)]]
     for k in range(10):
-        z0 = height * k / 10
-        z1 = height * (k + 1) / 10
+        z0 = h * k / 10
+        z1 = h * (k + 1) / 10
         segs.append([(x0, z0), (x1, z1)])
         segs.append([(x0, z1), (x1, z0)])
         segs.append([(x0, z1), (x1, z1)])
-    arms = [[(x1, tz), (tx + 6.0, tz)], [(x1, tz + 2.5), (x1, tz - 2.5)]]
+    tz = float(tgt[2]) + HARDPOINT_ABOVE_COM
+    arms = []
+    for sg in tw.arm_segments(z=tz):
+        arms.append([(float(sg[0, 0]), tz), (float(sg[1, 0]), tz)])
+        if abs(sg[1, 0] - sg[0, 0]) < 1.0:            # end-on: draw a stub
+            arms.append([(float(sg[0, 0]), tz - 1.8), (float(sg[0, 0]), tz + 1.8)])
     return segs, arms
 
 
@@ -363,7 +377,8 @@ def landing_detail(out: dict, target: np.ndarray, report: dict | None = None,
     fig.text(0.05, 0.945, "Landing burn and catch", fontsize=17,
              weight="bold")
     sub = (f"ignition at {le.get('ignition_alt', np.nan):.0f} m, "
-           f"{le.get('ignition_speed', np.nan):.0f} m/s  ·  13→3 engines at "
+           f"{le.get('ignition_speed', np.nan):.0f} m/s  ·  13→5 at "
+           f"{le.get('mid_alt', np.nan):.0f} m, 5→3 at "
            f"{le.get('handover_alt', np.nan):.0f} m  ·  burn "
            f"{t[-1] - t_ign:.1f} s  ·  x-axis: seconds to catch")
     fig.text(0.05, 0.912, sub, fontsize=10.5, color=INK2)
@@ -477,11 +492,16 @@ def landing_detail(out: dict, target: np.ndarray, report: dict | None = None,
     _phase_lines(a4, tt, thr * 100, idx)
     a4.set_ylim(0, 105)
     vline(a4)
-    for p, lab in ((3, "13 engines"), (4, "3 engines")):
-        k = np.where(idx == p)[0]
-        if len(k):
-            a4.text(tt[k[len(k) // 2]], 96, lab, color=INK2, fontsize=8,
-                    ha="center")
+    nl = np.asarray(out["n_lit"])[m] if "n_lit" in out else None
+    if nl is not None:
+        for n_e in (13, 5, 3):                     # 13 -> 5 -> 3 (Flight 14)
+            k = np.where((nl == n_e) & (idx >= 3))[0]
+            if len(k):
+                a4.text(tt[k[len(k) // 2]], 96, f"{n_e} engines", color=INK2,
+                        fontsize=8, ha="center")
+        for e in (le.get("mid_t", np.nan),):
+            if np.isfinite(e):
+                a4.axvline(e - t[-1], color=MUTED, lw=0.9, ls=":")
     a4.set_title("Throttle (%)")
     a4.set_xlabel("time to catch (s)")
 

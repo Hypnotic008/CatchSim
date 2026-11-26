@@ -570,6 +570,8 @@ class FlightSequencer:
         out["landing_events"] = ({} if lg is None else {
             "ignition_t": lg.ignition_t, "ignition_alt": lg.ignition_alt,
             "ignition_speed": lg.ignition_speed,
+            "mid_t": lg.mid_t, "mid_alt": lg.mid_alt,
+            "n_mid": lg.cfg.n_mid,
             "handover_t": lg.handover_t, "handover_alt": lg.handover_alt})
         return out
 
@@ -820,17 +822,33 @@ class FlightSequencer:
 # catch scoring
 # ---------------------------------------------------------------------------
 
+def tower_clearance(trajectory, tower) -> float:
+    """Smallest hull clearance [m] to the tower and its open arms along a
+    CoM path (N x 3); negative means the booster would have hit them."""
+    r = np.asarray(trajectory, float)
+    near = r[:, 2] < tower.height + 60.0
+    vals = [tower.clearance(p) for p in r[near]]
+    return float(min(vals)) if vals else float("inf")
+
+
 def catch_report(state: np.ndarray, target: np.ndarray,
                  tol_lateral: float = 1.0, tol_speed: float = 1.0,
                  tol_h_speed: float = 0.5,
                  tol_tilt_deg: float = 0.5, tol_rate_deg: float = 1.0,
-                 tower=None) -> dict:
+                 tower=None, catch_axis=None, corridor=None,
+                 trajectory=None) -> dict:
     """
     Score the terminal state against the catch criteria.
 
     Four numbers, all of which have to pass. Reporting them individually
     rather than as a single score is deliberate: when a run fails you want to
     know WHICH constraint it missed, because they have different causes.
+
+    catch_axis : horizontal direction the rudder fin must point at the catch
+                 (away from the tower; default +x).
+    corridor, trajectory : a CatchTower and the CoM path (N x 3). Adds the
+                 smallest hull clearance to the tower and open arms along
+                 the whole path, which must stay positive.
     """
     r, v, q, w, prop = D6.unpack(state)
     tgt = np.asarray(target, dtype=float)
@@ -849,7 +867,9 @@ def catch_report(state: np.ndarray, target: np.ndarray,
     fin3 = Q.rotate(q, np.array([0.0, 0.0, 1.0]))
     fin3_h = np.array([fin3[0], fin3[1]])
     nh = float(np.linalg.norm(fin3_h))
-    roll_err = (float(np.degrees(np.arccos(np.clip(fin3_h[0] / nh, -1.0, 1.0))))
+    ax = np.array([1.0, 0.0]) if catch_axis is None else np.asarray(catch_axis, float)[:2]
+    ax = ax / np.linalg.norm(ax)
+    roll_err = (float(np.degrees(np.arccos(np.clip(fin3_h @ ax / nh, -1.0, 1.0))))
                 if nh > 1e-6 else 0.0)
 
     # Tower compensation. The arms track the booster, so position error inside
@@ -877,6 +897,9 @@ def catch_report(state: np.ndarray, target: np.ndarray,
         "tilt_deg": (tilt, tilt <= tol_tilt_deg),
         "body_rate_deg_s": (rate, rate <= tol_rate_deg),
     }
+    if corridor is not None and trajectory is not None:
+        clr = tower_clearance(trajectory, corridor)
+        checks["tower_clearance_m"] = (clr, clr > 0.0)
     return {
         "checks": checks,
         "propellant_remaining_t": prop / 1000.0,

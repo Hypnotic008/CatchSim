@@ -225,8 +225,7 @@ def animate_realtime(out: dict, target: np.ndarray, path: str = "mission_rt.mp4"
         # them to be more than a smudge. At a 100 km span a 146 m tower is
         # sub-pixel, so rendering it early just adds noise.
         if span < 3000.0:
-            tower, arms = tower_geometry(catch_altitude=float(target[2]), r=p, target=target,
-                                         pad=(-30.0, 0.0), arm_length=15.0)
+            tower, arms = tower_geometry(catch_altitude=float(target[2]), r=p, target=target)
             for segd in tower:
                 ax3.plot(segd[:, 0], segd[:, 1], segd[:, 2],
                          color="#8b949e", lw=1.6, alpha=0.9)

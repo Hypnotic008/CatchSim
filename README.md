@@ -175,9 +175,12 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   fin with the pair 180° apart at ±90° from it, the pair resting on the
   chopsticks at the catch) and 33 bells in the webcast layout. Plumes expand into translucent vacuum
   plumes at altitude and tighten to shock-diamond plumes near the ground.
-  The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 3).
+  The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 5 → 3).
 - **Tower:** lattice tower with chopsticks that close as the booster
-  arrives, launch mount and tank farm.
+  arrives, launch mount and tank farm. Tower 2 by default: the rig is
+  rotated to its real heading, with the arms opening south-southwest and
+  the tower north of the catch point. `--tower 1` gives the ocean-facing
+  Tower 1.
 - **Cameras:** one continuous move from separation to the approach: a chase
   orbit through flip and boostback that swings up behind the booster to
   look down on it and ahead toward the Earth and the tower through the coast.
@@ -198,8 +201,29 @@ eased transitions and a 6 s hold on the caught booster.
 | flip | 5 → 33 | smooth pure-pitch slew | `mission.py` |
 | boostback | 33 → 13 → 3 | predictive cutoff + heading, re-solved in flight; thrust and mass-flow estimators | `mission.py`, `phases.py` |
 | reorient + coast | 0 | RCS slew (~120 s, rate/accel feed-forward) to engines-first along the predicted entry-interface velocity, held through the vacuum coast, blended into the relative wind as q builds; grid-fin entry steering once q > 1.5 kPa; drag estimator | `mission.py`, `entry.py`, `phases.py` |
-| landing brake | 13 | energy-matched vertical, velocity-field lateral, 3-D thrust vector | `landing.py` |
+| landing brake | 13 → 5 | hard 13-engine brake until 5 engines can finish it (Flight 14 sequence), then energy-matched vertical, velocity-field lateral, 3-D thrust vector | `landing.py` |
 | final approach | 3 | one constant-deceleration arc (24 → 0.5 m/s at 1.35 m/s²), velocity-field lateral + disturbance observer, closing tilt envelope, roll to catch | `landing.py` |
+
+## Catch tower and landing-burn sequence
+
+- **Tower 2 orientation (default).** Starbase Tower 2's arms open to the
+  south-southwest (heading ~190°, measured from satellite imagery), with the
+  tower ~30 m north of the catch point. A booster coming home from the east
+  therefore approaches *across* the arms rather than straight into the mouth,
+  as it would with Tower 1. `quatsim/tower.py` builds everything in the tower
+  frame and rotates it: the arm-tracking envelope (3 m toward/away from the
+  tower, 5 m across), the rudder-fin roll at the catch (the rudder must point
+  away from the tower, so the booster holds that roll from the vacuum
+  reorient onward), and a new `tower_clearance_m` check, which is the
+  smallest gap between the hull and the tower or open arms along the whole
+  path. `python run_mission.py --tower 1` (or `CATCHSIM_TOWER=1`) flies the
+  ocean-facing Tower 1 instead.
+- **13 → 5 → 3 landing burn (Flight 14).** The brake ignites on 13 engines
+  and drops to 5 once five engines can finish the energy-matched brake with
+  20% throttle margin. Until then the 13 brake hard (85% of full thrust), so
+  that point arrives. The 5 then hand over to 3 at the terminal gate. On the
+  nominal flight that is 13 → 5 at ~1000 m and 5 → 3 at ~330 m.
+  `LandingConfig(n_mid=0)` restores the old 13 → 3 burn.
 
 ## Modelling notes and honest limits
 

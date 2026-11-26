@@ -32,8 +32,21 @@ const SUN_DIR = new THREE.Vector3(0.55, 0.42, 0.72).normalize();
 const M = window.MISSION || await (await fetch('./data/mission.json')).json();
 const N = M.t.length;
 const TARGET = new THREE.Vector3(...M.target);          // CoM at the catch
-const TOWER_X = TARGET.x - 24.0;                        // tower centre (west)
+// Tower frame. Everything about the tower (lattice, carriage, chopsticks,
+// pad apron, catch cameras) is built facing +X and rotated as one rig to the
+// exported arm heading: Tower 1 opens east to the Gulf, Tower 2 opens
+// south-southwest, so the returning booster comes in across its arms.
+const TWR = M.tower || { facing_deg: 90.0, standoff: 24.0, number: 1 };
+const TOWER_HEADING = THREE.MathUtils.degToRad(TWR.facing_deg);
+// sim (x east, y north) -> three (x, -z): +X local maps to (sin h, 0, -cos h)
+const TOWER_ROT = Math.atan2(Math.cos(TOWER_HEADING), Math.sin(TOWER_HEADING));
+const TOWER_X = -TWR.standoff;                          // tower centre, tower-local
 const ARM_Y = TARGET.y + HARDPOINT_ABOVE_COM;
+const _Y = new THREE.Vector3(0, 1, 0);
+// tower-local (along the arms, up, across) -> world, origin under the catch point
+const towerWorld = (a, y, c) => new THREE.Vector3(a, y, c).applyAxisAngle(_Y, TOWER_ROT)
+  .add(new THREE.Vector3(TARGET.x, 0, TARGET.z));
+const PAD_C = towerWorld(-15.0, 0, 0);
 
 // ---------------------------------------------------------------------------
 // state interpolation
@@ -216,7 +229,7 @@ const earthMat = new THREE.ShaderMaterial({
       float lagoon = smoothstep(.62,.66, n1*.7+n3*.5) * (1.-beach) * step(q.x, cx-200.);
       land = mix(land, vec3(0.20,0.30,0.33), lagoon);
       // pad: concrete apron around the tower and launch mount, access road
-      float pad = 1. - smoothstep(150., 165., length(q - vec2(tgt.x-15., tgt.z)));
+      float pad = 1. - smoothstep(150., 165., length(q - vec2(${PAD_C.x.toFixed(2)}, ${PAD_C.z.toFixed(2)})));
       land = mix(land, vec3(0.62,0.62,0.60) * (0.92+0.08*n2), pad);
       float road = (1.-smoothstep(4., 6., abs(q.y + 0.018*q.x*0. - 60.))) * step(q.x, tgt.x-150.) * step(-2600., q.x);
       land = mix(land, vec3(0.28,0.28,0.29), road);
@@ -530,6 +543,10 @@ const towerMat = new THREE.MeshStandardMaterial({ color: 0x6d6f73, metalness: 0.
 const darkMat = new THREE.MeshStandardMaterial({ color: 0x3a3b3e, metalness: 0.6, roughness: 0.55 });
 const concreteMat = new THREE.MeshStandardMaterial({ color: 0x9b9893, metalness: 0.0, roughness: 0.9 });
 const TW = 12.0, TH = 146.0;
+const towerRig = new THREE.Group();
+towerRig.position.set(TARGET.x, 0, TARGET.z);
+towerRig.rotation.y = TOWER_ROT;
+scene.add(towerRig);
 {
   const members = [];
   const hs = TW / 2;
@@ -561,12 +578,12 @@ const TW = 12.0, TH = 146.0;
   });
   inst.castShadow = true; inst.receiveShadow = true;
   inst.position.set(TOWER_X, 0, 0);
-  scene.add(inst);
+  towerRig.add(inst);
   // tower base block and top deck
   const base = new THREE.Mesh(new THREE.BoxGeometry(18, 8, 18), concreteMat);
-  base.position.set(TOWER_X, 4, 0); base.receiveShadow = true; base.castShadow = true; scene.add(base);
+  base.position.set(TOWER_X, 4, 0); base.receiveShadow = true; base.castShadow = true; towerRig.add(base);
   const deck = new THREE.Mesh(new THREE.BoxGeometry(TW + 3, 2, TW + 3), darkMat);
-  deck.position.set(TOWER_X, TH, 0); deck.castShadow = true; scene.add(deck);
+  deck.position.set(TOWER_X, TH, 0); deck.castShadow = true; towerRig.add(deck);
 }
 
 // chopsticks: carriage on the tower face, two arms hinged at the face corners
@@ -574,7 +591,7 @@ const FACE_X = TOWER_X + TW / 2;
 const carriage = new THREE.Mesh(new THREE.BoxGeometry(3.5, 9, TW + 4), darkMat);
 carriage.position.set(FACE_X + 1.2, ARM_Y + 1.5, 0);
 carriage.castShadow = true;
-scene.add(carriage);
+towerRig.add(carriage);
 const arms = [];
 for (const side of [+1, -1]) {
   const hinge = new THREE.Group();
@@ -589,7 +606,7 @@ for (const side of [+1, -1]) {
   truss.position.set(armLen / 2, -1.9, 0);
   arm.add(beam, rail, truss);
   hinge.add(arm);
-  scene.add(hinge);
+  towerRig.add(hinge);
   arms.push({ hinge, side });
 }
 
@@ -616,7 +633,7 @@ for (const side of [+1, -1]) {
   const tankMat = new THREE.MeshStandardMaterial({ color: 0xd9dbdc, metalness: 0.6, roughness: 0.35 });
   for (let k = 0; k < 8; k++) {
     const t = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 26 + 6 * (k % 3), 40), tankMat);
-    t.position.set(TOWER_X - 150 - (k % 4) * 13, (26 + 6 * (k % 3)) / 2, -60 + Math.floor(k / 4) * 14);
+    t.position.set(TARGET.x - 174 - (k % 4) * 13, (26 + 6 * (k % 3)) / 2, -60 + Math.floor(k / 4) * 14);
     t.castShadow = true; scene.add(t);
   }
   const bMat = new THREE.MeshStandardMaterial({ color: 0x8c8a86, roughness: 0.85 });
@@ -802,7 +819,15 @@ const iApproach = (() => { for (let i = 0; i < N; i++) if (M.phase[i] === 2 && M
 const tApproach = M.t[iApproach];
 const tIgn = M.ignition_t ?? M.t[N - 1] - 30;
 const tEnd = M.t[N - 1];
-const GROUND_CAM = new THREE.Vector3(TARGET.x - 260, 18, TARGET.z + 540);
+// Catch camera: compass bearing from the catch point, 600 m out. Tower 1
+// keeps its original shot (SSW, looking across the arms); for Tower 2 the
+// camera stands SSE, ~30 deg off the arm axis, looking into the open mouth
+// with the sun (from the SE) behind it -- the tower-relative position of the
+// Tower 1 shot would look straight into the sun.
+const CAM_BEARING = THREE.MathUtils.degToRad(TWR.camera_bearing ??
+  (Math.abs(TWR.facing_deg - 90) < 1 ? 205.7 : TWR.facing_deg - 30));
+const bearingWorld = (b, d, y) => new THREE.Vector3(TARGET.x + d * Math.sin(b), y, TARGET.z - d * Math.cos(b));
+const GROUND_CAM = bearingWorld(CAM_BEARING, 600, 18);
 const smooth = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
 const _v = new THREE.Vector3();
 
@@ -851,7 +876,7 @@ function director(st, videoT, holdT) {
   } else {
     // GROUND TRACKING CAMERA with a long lens, easing to a fixed catch framing
     camera.position.copy(GROUND_CAM);
-    const catchFrame = new THREE.Vector3(TARGET.x - 10, TARGET.y - 8, TARGET.z);
+    const catchFrame = towerWorld(-10, TARGET.y - 8, 0);
     const w = smooth(tEnd - 16, tEnd - 3, st.t);
     const look = new THREE.Vector3().lerpVectors(p, catchFrame, w);
     const dist = camera.position.distanceTo(p);
@@ -860,7 +885,7 @@ function director(st, videoT, holdT) {
     camera.fov = THREE.MathUtils.clamp(THREE.MathUtils.lerp(fovTrack, fovCatch, w), 1.2, 45);
     if (holdT > 0) {                                       // slow push-in on the caught booster
       const k = smooth(0, 6, holdT);
-      camera.position.lerp(new THREE.Vector3(TARGET.x - 170, 22, TARGET.z + 470), k);
+      camera.position.lerp(bearingWorld(CAM_BEARING - 0.06, 500, 22), k);
       camera.fov = THREE.MathUtils.lerp(fovCatch, 16, k);
     }
     camera.up.set(0, 1, 0);

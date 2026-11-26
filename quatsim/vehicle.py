@@ -102,7 +102,10 @@ FLIGHT_13_ACTUAL: list[Phase] = [
     # hardest control segment in the flight.
     Phase("coast_entry",     0,  0, 200.0, 0.00),
 
-    # Landing burn, 13 -> 3. SCALED FROM V2 OBSERVATION, NOT MEASURED ON V3.
+    # Landing burn. SCALED FROM V2 OBSERVATION, NOT MEASURED ON V3. Flight 14
+    # showed the sequence is 13 -> 5 -> 3, not 13 -> 3; this table keeps the
+    # older two-step timing for reference. The simulated burn
+    # (landing.LandingGuidance) flies 13 -> 5 -> 3 and picks its own times.
     # Observed on a V2 booster: 7 s on 13 engines, 15 s on 3. Raptor 3 makes
     # 1.217x Raptor 2 thrust, so at equal throttle V3 needs 0.82x the duration
     # for the same delta-v. The throttle band is inferred from T/W: at full
@@ -111,7 +114,7 @@ FLIGHT_13_ACTUAL: list[Phase] = [
     # CAVEAT: at these thrust levels V3 sits near Raptor minimum throttle. If
     # the real floor is above ~0.4 this schedule is infeasible and the burn
     # must ignite later or drop to fewer engines sooner. That tension may be
-    # the reason the 13 -> 3 downselect exists at all.
+    # the reason the downselect (13 -> 5 -> 3) exists at all.
     Phase("landing_13",     13, 13,   5.8, 0.45),
     Phase("landing_3",       3,  3,  12.3, 0.45),
 ]

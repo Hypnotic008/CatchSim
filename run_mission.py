@@ -34,6 +34,7 @@ from quatsim.entry import EntryConfig
 from quatsim.landing import LandingConfig
 from quatsim.phases import FlightSequencer, catch_report, solve_ignition_altitude
 from quatsim.position import PositionController, PositionGains
+from quatsim.tower import CatchTower
 from quatsim.vehicle import Vehicle
 
 # --- converged solution, see SOLUTION.md -----------------------------------
@@ -44,6 +45,25 @@ BB_THROTTLE = 0.87
 T33_BURN = 9.1472         # s on 33 engines
 BB_ELEVATION = 1.0        # deg above horizontal on the retrograde axis
 TARGET = np.array([0.0, 0.0, 105.0])
+
+# Which Starbase tower catches the booster: 2 (default; arms open to the
+# south-southwest, so the booster coming home from the east approaches across
+# the arms) or 1 (arms open to the ocean). CATCHSIM_TOWER lets worker
+# processes inherit the choice.
+TOWER_NUMBER = int(os.environ.get("CATCHSIM_TOWER", "2"))
+
+
+def tower(n: int | None = None) -> CatchTower:
+    return CatchTower.numbered(TOWER_NUMBER if n is None else n,
+                               center=(float(TARGET[0]), float(TARGET[1])),
+                               catch_altitude=float(TARGET[2]))
+
+
+def report(out, n: int | None = None) -> dict:
+    """Catch report for a flown mission against the selected tower."""
+    tw = tower(n)
+    return catch_report(out["state"][-1], TARGET, catch_axis=tw.facing,
+                        corridor=tw, trajectory=out["r"])
 
 
 def build():
@@ -81,7 +101,7 @@ AIM_X_1200 = 200.0
 
 
 def landing_config() -> LandingConfig:
-    return LandingConfig(target=TARGET.copy())
+    return LandingConfig(target=TARGET.copy(), catch_roll_axis=tower().facing)
 
 
 def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
@@ -90,7 +110,8 @@ def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
     bb["duration"] = t33 + 6.0
     segs = build_mission(vehicle, aero, sep, bb, land, TARGET, np.zeros(3),
                          flip_duration=FLIP_DURATION, flip_engines=5,
-                         boostback_elevation=np.radians(BB_ELEVATION))
+                         boostback_elevation=np.radians(BB_ELEVATION),
+                         catch_axis=tower().facing)
     for s in segs:
         if s.name.startswith("boostback"):
             s.throttle = BB_THROTTLE
@@ -115,6 +136,7 @@ def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,
 
 
 def main(argv=None):
+    global TOWER_NUMBER
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--figures", action="store_true",
@@ -128,15 +150,23 @@ def main(argv=None):
                     help="run N dispersed cases and write figs/monte_carlo.png")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--tower", type=int, choices=(1, 2), default=TOWER_NUMBER,
+                    help="catch tower: 2 = Tower 2, arms facing SSW (default);\n"
+                         "1 = Tower 1, arms facing the ocean")
     ap.add_argument("--no-steer", action="store_true",
                     help="disable grid-fin entry steering (for comparison)")
     args = ap.parse_args(argv)
+    TOWER_NUMBER = args.tower
+    os.environ["CATCHSIM_TOWER"] = str(args.tower)
 
     os.makedirs("figs", exist_ok=True)
     t0 = time.time()
     vehicle, aero, sep, bb0, land, seq = build()
     print(vehicle.summary())
     print(mission_report(sep, bb0, land))
+    tw = tower()
+    print(f"catch tower            Tower {TOWER_NUMBER}, arms facing "
+          f"{tw.facing_deg:.0f} deg (compass)")
     print()
 
     out = fly(T33_BURN, vehicle, aero, sep, bb0, land, seq,
@@ -153,10 +183,13 @@ def main(argv=None):
               f"{np.degrees(hist[-1][2]):+.3f} deg)")
     print(f"landing ignition       {le['ignition_alt']:8.0f} m at "
           f"{le['ignition_speed']:.0f} m/s")
-    print(f"13 -> 3 engines        {le['handover_alt']:8.0f} m")
+    if np.isfinite(le.get("mid_alt", np.nan)):
+        print(f"13 -> 5 engines        {le['mid_alt']:8.0f} m")
+    first = "5" if np.isfinite(le.get("mid_alt", np.nan)) else "13"
+    print(f"{first + ' -> 3 engines':23s}{le['handover_alt']:8.0f} m")
     print(f"flight time            {out['t'][-1]:8.1f} s")
     print()
-    rep = catch_report(out["state"][-1], TARGET)
+    rep = report(out)
     for name, (value, ok) in rep["checks"].items():
         print(f"  {name:20s} {value:10.3f}  {'PASS' if ok else 'FAIL'}")
     print(f"  {'propellant left':20s} {rep['propellant_remaining_t']:10.2f} t")

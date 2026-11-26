@@ -31,6 +31,8 @@ import json
 
 import numpy as np
 
+from .tower import TOWER_FACING_DEG
+
 from . import quaternion as Q
 
 M_ENU_TO_THREE = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]])
@@ -82,6 +84,15 @@ def playback_schedule(out, fps=30, hold=6.0):
     return ft, fr
 
 
+def _tower_info(target) -> dict:
+    from .tower import current_tower
+    tw = current_tower(np.asarray(target, float))
+    n = next((k for k, d in TOWER_FACING_DEG.items()
+              if abs(d - tw.facing_deg) < 1e-9), 0)
+    return {"number": n, "facing_deg": float(tw.facing_deg),
+            "standoff": float(tw.standoff), "width": float(tw.width)}
+
+
 def export_mission(out: dict, target, report: dict | None, path: str,
                    fps: int = 30, stride: int = 1):
     t = np.asarray(out["t"], float)[::stride]
@@ -119,8 +130,12 @@ def export_mission(out: dict, target, report: dict | None, path: str,
     events.append({"t": float(t[ka]), "name": "APOGEE"})
     if le and np.isfinite(le.get("ignition_t", np.nan)):
         events.append({"t": float(le["ignition_t"]), "name": "LANDING BURN"})
+    if le and np.isfinite(le.get("mid_t", np.nan)):
+        events.append({"t": float(le["mid_t"]), "name": "13 → 5"})
     if le and np.isfinite(le.get("handover_t", np.nan)):
-        events.append({"t": float(le["handover_t"]), "name": "13 → 3"})
+        events.append({"t": float(le["handover_t"]),
+                       "name": "5 → 3" if np.isfinite(le.get("mid_t", np.nan))
+                       else "13 → 3"})
     events.append({"t": float(t[-1]), "name": "CATCH"})
     events.sort(key=lambda e: e["t"])
 
@@ -145,6 +160,8 @@ def export_mission(out: dict, target, report: dict | None, path: str,
         "engines": {"pos": np.round(lay, 4).tolist(),
                     "lit": {str(k): v for k, v in lit.items()}},
         "ignition_t": le.get("ignition_t"),
+        "tower": _tower_info(target),
+        "mid_t": le.get("mid_t"),
         "handover_t": le.get("handover_t"),
         "cutoff_t": (float(hist[-1][0] + hist[-1][1]) if hist else None),
         "report": None if report is None else {

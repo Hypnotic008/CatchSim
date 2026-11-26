@@ -156,3 +156,34 @@ def test_export3d_frame_mapping_and_schedule():
     assert fr[np.searchsorted(ft, 10.0)] == pytest.approx(1.0, abs=0.05)   # boostback 1x
     assert fr[np.searchsorted(ft, 120.0)] == pytest.approx(12.0, rel=0.05)  # coast 12x
     assert fr[np.searchsorted(ft, 280.0)] == pytest.approx(1.0, abs=0.05)  # landing 1x
+
+
+def test_landing_burn_downselects_13_5_3():
+    """Flight 14 sequence: 13 at ignition, 5 once 5 can finish the brake,
+    3 at the gate; never back up."""
+    from quatsim.landing import BRAKE
+    veh, aero = Vehicle(prop_mass=500e3), AeroModel()
+    lg = LandingGuidance(LandingConfig(), veh, aero)
+    q = attitude_from_pointing(np.array([0.0, 0.0, 1.0]))
+    # ignition state, then a brake that has already shed most of its speed
+    cmd = lg.step(np.array([0.0, 0.0, 1300.0]), np.array([0.0, 0.0, -300.0]),
+                  q, 120e3, 0.0)
+    assert cmd.n_lit == 13
+    cmd = lg.step(np.array([0.0, 0.0, 900.0]), np.array([0.0, 0.0, -110.0]),
+                  q, 110e3, 3.0)
+    assert lg.phase == BRAKE and cmd.n_lit == 5
+    assert np.isfinite(lg.mid_alt)
+    cmd = lg.step(np.array([0.0, 0.0, 300.0]), np.array([0.0, 0.0, -25.0]),
+                  q, 100e3, 12.0)
+    assert cmd.n_lit == 3
+
+
+def test_landing_without_mid_stage_is_13_to_3():
+    veh, aero = Vehicle(prop_mass=500e3), AeroModel()
+    lg = LandingGuidance(LandingConfig(n_mid=0), veh, aero)
+    q = attitude_from_pointing(np.array([0.0, 0.0, 1.0]))
+    lg.step(np.array([0.0, 0.0, 1300.0]), np.array([0.0, 0.0, -300.0]),
+            q, 120e3, 0.0)
+    cmd = lg.step(np.array([0.0, 0.0, 900.0]), np.array([0.0, 0.0, -110.0]),
+                  q, 110e3, 3.0)
+    assert cmd.n_lit == 13

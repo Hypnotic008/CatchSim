@@ -415,77 +415,31 @@ def telemetry_panel(out: dict, frame: int | None = None,
 # full-mission animation
 # ---------------------------------------------------------------------------
 
-def tower_geometry(catch_altitude: float = 105.0, height: float = 146.0,
-                   width: float = 12.0, arm_length: float = 15.0,
-                   arm_gap: float = 12.0, pad=(-30.0, 0.0),
-                   r: np.ndarray | None = None,
-                   target: np.ndarray | None = None):
+def tower_geometry(catch_altitude: float = 105.0, r: np.ndarray | None = None,
+                   target: np.ndarray | None = None, tower=None, **_old):
     """Wireframe catch tower with tracked, hinged chopstick arms.
 
-    Geometry mirrors :class:`quatsim.tower.CatchTower`: a rectangular tower
-    lattice plus two arms hinged at the tower face.  When ``r`` and ``target``
-    are supplied, the carriage/arms translate inside the same estimated
-    tracking envelope used by the catch model.
+    Built by :class:`quatsim.tower.CatchTower` (the selected tower, rotated
+    to its real heading). When ``r`` and ``target`` are supplied the arms
+    translate inside the same estimated tracking envelope used by the catch
+    model. Old keyword arguments (pad, width, ...) are accepted and ignored.
     """
-    px, py = pad
-    hw = 0.5 * width
-    corners = [(px-hw, py-hw), (px+hw, py-hw),
-               (px+hw, py+hw), (px-hw, py+hw)]
-    tower = []
-    for i, (x0, y0) in enumerate(corners):
-        x1, y1 = corners[(i + 1) % 4]
-        tower.append(np.array([[x0, y0, 0.0], [x0, y0, height]]))
-        tower.append(np.array([[x0, y0, 0.0], [x1, y1, 0.0]]))
-        tower.append(np.array([[x0, y0, height], [x1, y1, height]]))
-        for frac in (0.33, 0.66):
-            z = height * frac
-            tower.append(np.array([[x0, y0, z], [x1, y1, z]]))
-
-    offset = np.zeros(3)
-    if r is not None and target is not None:
-        d = np.asarray(r, float) - np.asarray(target, float)
-        offset = np.array([
-            np.clip(d[0], -3.0, 3.0),
-            np.clip(d[1], -5.0, 5.0),
-            np.clip(d[2], -3.0, 3.0),
-        ])
-
-    arms = []
-    hinge_x = px + hw + offset[0]
-    z = catch_altitude + offset[2]
-    for side in (+1, -1):
-        y = py + side * 0.5 * arm_gap + offset[1]
-        tip_x = hinge_x + arm_length
-        tip_y = y - side * 3.0
-        # Main arm, angled hinge-to-tip in plan view.
-        arms.append(np.array([[hinge_x, y, z], [tip_x, tip_y, z]]))
-        # Short closing tip.
-        arms.append(np.array([[tip_x, tip_y, z],
-                              [tip_x, tip_y - side * 2.0, z]]))
-        # Hinge linkage back to the tower face.
-        arms.append(np.array([[px + offset[0], py + offset[1], z],
-                              [hinge_x, y, z]]))
-    return tower, arms
+    from .tower import current_tower
+    tgt = (np.array([0.0, 0.0, catch_altitude]) if target is None
+           else np.asarray(target, float))
+    tw = tower if tower is not None else current_tower(tgt)
+    return tw.structure_segments(), tw.arm_segments(r, target)
 
 
-def visual_catch_point(target: np.ndarray, pad=(-30.0, 0.0),
-                       width: float = 12.0, arm_length: float = 15.0,
-                       arm_gap: float = 12.0) -> np.ndarray:
-    """Return the visual seating point between the two 15 m chopstick tips.
+def tower_pad(target) -> tuple:
+    from .tower import current_tower
+    return current_tower(target).pad
 
-    This is a visualization-only coordinate.  The simulator's physical catch
-    target remains ``target``; only the rendered booster is eased toward this
-    point near the end of the animation.  Keeping this separate prevents the
-    artwork from changing the guidance/catch physics.
-    """
-    px, py = pad
-    hinge_x = px + 0.5 * width
-    # Both arms extend in +x, so their tip midpoint is halfway along the arm.
-    return np.asarray(target, dtype=float) + np.array([
-        hinge_x + 0.5 * arm_length - target[0],
-        py - target[1],
-        0.0,
-    ])
+
+def visual_catch_point(target: np.ndarray, **_old) -> np.ndarray:
+    """Seating point between the chopstick arms. The arms are drawn reaching
+    past the catch point, so this is the physical target itself."""
+    return np.asarray(target, dtype=float).copy()
 
 
 def _smooth_visual_position(p: np.ndarray, target: np.ndarray,
@@ -528,7 +482,7 @@ def _interp_log_state(out: dict, t: float):
     return k, j, f, r, q
 
 
-def animate_mission(out: dict, target: np.ndarray, pad=(-30.0, 0.0),
+def animate_mission(out: dict, target: np.ndarray, pad=None,
                     n_frames: int = 200, fps: int = 25,
                     path: str = "mission.gif", hold_seconds: float = 2.0,
                     visual_align_altitude: float = 180.0):
@@ -551,6 +505,8 @@ def animate_mission(out: dict, target: np.ndarray, pad=(-30.0, 0.0),
     The inset axes hold a zoomed terminal view, because at a 100 km scale the
     40 m divert is smaller than a pixel.
     """
+    if pad is None:
+        pad = tower_pad(target)
     r, qs = out["r"], out["q"]
 
     # Build a continuous frame-time schedule, then interpolate between the

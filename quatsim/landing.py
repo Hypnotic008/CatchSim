@@ -52,12 +52,15 @@ PHASES
 ------
     COAST     engines off, attitude held engines-first against the velocity.
               Ignition is tested every step (energy test, below).
-    BRAKE     13 engines. Vertical: energy matching to the GATE state
+    BRAKE     13 engines, then 5 (13-5-3, as flown on Flight 14): the brake
+              drops to 5 engines as soon as 5 can deliver the required
+              deceleration with throttle headroom to spare. Vertical: energy
+              matching to the GATE state
               (h_gate, v_gate), recomputed every step from the actual state,
               so throttle is an output rather than a schedule. Lateral: a
               velocity-field braking law toward the point above the tower,
               so 13 engines do the divert and hand over nearly overhead.
-    TERMINAL  3 engines. Vertical: one constant-deceleration arc from the
+    TERMINAL  3 engines (5 -> 3 at the gate). Vertical: one constant-deceleration arc from the
               handover speed (~24 m/s) to v_touch at the catch plane, so
               the speed is wiped off smoothly rather than stopped high and
               crept down.
@@ -98,6 +101,13 @@ class LandingConfig:
 
     # --- engines ---------------------------------------------------------
     n_brake: int = 13
+    # Landing-burn engine sequence 13 -> 5 -> 3 (Flight 14). The 5-engine stage
+    # takes over during the brake once the required specific force fits within
+    # `mid_frac` of what 5 engines give at full throttle, so the same guidance
+    # law keeps flying with headroom left for the lateral divert. 0 = old 13 -> 3.
+    n_mid: int = 5
+    mid_frac: float = 0.80
+    hard13_frac: float = 0.85        # 13-engine brake level while 5 cannot yet cope
     n_terminal: int = 3
     throttle_floor: float = 0.40          # Raptor deep-throttle floor
     # Effective floor on the final 3-engine approach. Three engines at 40%
@@ -222,6 +232,8 @@ class LandingGuidance:
         self.ignition_t = float("nan")
         self.handover_alt = float("nan")
         self.handover_t = float("nan")
+        self.mid_alt = float("nan")
+        self.mid_t = float("nan")
         self.roll_start = None
         self._d_hat = np.zeros(2)
         self._obs_prev = None
@@ -323,6 +335,23 @@ class LandingGuidance:
             dh = max(h - c.gate_altitude, 1.0)
             # Energy matching to the gate, recomputed from the actual state.
             a_z = max((vz * vz - c.v_gate ** 2) / (2.0 * dh), 0.0)
+            # 13 -> 5 -> 3. Energy matching alone holds a_z constant, so the
+            # demand never falls to what 5 engines can give. Instead the 13
+            # brake hard (hard13_frac of full thrust) until the remaining
+            # energy-matched brake fits in mid_frac of 5-engine authority,
+            # then 8 shut down (for good) and the 5 fly the same law.
+            if c.n_mid and self.n_lit == c.n_brake:
+                a5 = (c.mid_frac * self.vehicle.axial_thrust(c.n_mid, 1.0) / m
+                      - ENV.G0 + float(drag[2]) / m)
+                if a_z <= a5:
+                    self.n_lit = c.n_mid
+                    self.mid_alt = h
+                    self.mid_t = t
+                else:
+                    a_hard = (c.hard13_frac
+                              * self.vehicle.axial_thrust(c.n_brake, 1.0) / m
+                              - ENV.G0 + float(drag[2]) / m)
+                    a_z = max(a_z, a_hard)
             t_go = 2.0 * dh / max(abs(vz) + c.v_gate, 1.0)
             # LATERAL: velocity-field braking law, no time-to-go.
             #
