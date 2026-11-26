@@ -126,6 +126,7 @@ class FlightLog:
     r_ref: list = field(default_factory=list)
     q_ref: list = field(default_factory=list)
     n_lit: list = field(default_factory=list)
+    fins: list = field(default_factory=list)      # grid fin deflections [deg]
 
     def arrays(self) -> dict:
         S = np.array(self.state)
@@ -145,6 +146,8 @@ class FlightLog:
             "r_ref": np.array(self.r_ref),
             "q_ref": np.array(self.q_ref),
             "n_lit": np.array(self.n_lit),
+            "fin_deflection": (np.array(self.fins) if self.fins
+                               else np.zeros((len(self.t), 3))),
         }
 
 
@@ -335,6 +338,8 @@ class FlightSequencer:
         self._entry = None
         self._entry_log = []
         self._coast_hold_q = None
+        self._fin_delta = np.zeros(3)      # grid fin deflections [rad]
+        self._fin_t = None
         self._drag_scale = 1.0
         import copy as _copy
         self._est_aero = _copy.copy(self.gnc_aero)
@@ -512,6 +517,7 @@ class FlightSequencer:
                     log.throttle.append(throttle)
                     log.tilt.append(np.degrees(D6.tilt_from_vertical(s)))
                     log.gimbal.append(np.degrees(gim))
+                    log.fins.append(np.degrees(self._fin_delta))
                     log.r_ref.append(r_ref_now)
                     log.q_ref.append(q_ref_now)
                     log.n_lit.append(getattr(self, "_landing_n_lit", seg.n_lit)
@@ -533,6 +539,7 @@ class FlightSequencer:
                     log.segment.append(seg.name); log.throttle.append(throttle)
                     log.tilt.append(np.degrees(D6.tilt_from_vertical(s)))
                     log.gimbal.append(np.degrees(gim))
+                    log.fins.append(np.degrees(self._fin_delta))
                     log.r_ref.append(r_ref_now); log.q_ref.append(q_ref_now)
                     log.n_lit.append(getattr(self, "_landing_n_lit", seg.n_lit)
                                      if seg.mode == Mode.LANDING else
@@ -547,6 +554,7 @@ class FlightSequencer:
         # the landing burn back on 13 engines after it has downselected to 2.
         log.tilt.append(np.degrees(D6.tilt_from_vertical(s)))
         log.gimbal.append(0.0)
+        log.fins.append(np.degrees(self._fin_delta))
         log.r_ref.append(s[D6.R_SLICE].copy()); log.q_ref.append(s[D6.Q_SLICE].copy())
         log.n_lit.append(self._landing_n_lit
                          if segments[-1].mode == Mode.LANDING
@@ -643,9 +651,10 @@ class FlightSequencer:
         cancelling the (guidance-model) weathercocking moment at the
         reference attitude -- without it the fins would need a standing
         attitude error to hold any angle of attack, and the trim would sit
-        short of the command. Fin authority is the GridFinModel's
-        q-dependent maximum; allocation is idealised (torque, not individual
-        fin angles).
+        short of the command. With a GridFinSet the torque is allocated to
+        the three fins' deflections (deflection and rate limited, pitch, yaw
+        and roll), and RCS supplies what the fins cannot; with a plain
+        GridFinModel the allocation is idealised (a torque budget).
         """
         from .control import ControlGains
         h = float(r[2])
@@ -670,6 +679,19 @@ class FlightSequencer:
         finally:
             ctrl.gains = saved
         tau = tau - AERO.restoring_moment(q_ref, v_air, h)
+        if isinstance(self.fins, AERO.GridFinSet):
+            dt = 0.0 if self._fin_t is None else max(self._t_now - self._fin_t, 0.0)
+            self._fin_t = self._t_now
+            aoa, roll = AERO.wind_angles(q, v_air)
+            delta, tau_f = self.fins.allocate(tau, mach, q_dyn, self._fin_delta,
+                                              dt, aoa, roll)
+            self._fin_delta = delta
+            res = tau - tau_f
+            roll_rcs, *_ = ctrl.roll.allocate_roll(self.vehicle,
+                                                   float(res[0]), 0, 0.0)
+            return tau_f + np.array([roll_rcs,
+                                     float(np.clip(res[1], -rcs, rcs)),
+                                     float(np.clip(res[2], -rcs, rcs))])
         roll_applied, *_ = ctrl.roll.allocate_roll(self.vehicle,
                                                    float(tau[0]), 0, 0.0)
         return np.array([roll_applied,
@@ -721,11 +743,23 @@ class FlightSequencer:
         v.isp_vac = self.gnc_vehicle.isp_vac * kt / km
         return v
 
+    def _relax_fins(self):
+        """Outside the aerodynamic control law (engines lit) the grid fins
+        return to neutral at their rate limit."""
+        if not isinstance(self.fins, AERO.GridFinSet):
+            return
+        if self._fin_t is not None and np.any(self._fin_delta):
+            step = self.fins.rate_limit * max(self._t_now - self._fin_t, 0.0)
+            self._fin_delta = self._fin_delta - np.clip(self._fin_delta, -step, step)
+        self._fin_t = self._t_now
+
     def _actuate(self, seg: Segment, s: np.ndarray, t_seg: float,
                  r_seg_start: np.ndarray):
         """Run the controller for this segment and return the actuator state."""
         r, v, q, w, prop = D6.unpack(s)
         veh = self.vehicle
+        if seg.mode not in (Mode.COAST, Mode.LANDING) and seg.n_lit > 0:
+            self._relax_fins()
 
         if seg.mode == Mode.COAST or seg.n_lit == 0:
             # No lit engines: no gimbal. With an entry-guidance config the
@@ -778,6 +812,8 @@ class FlightSequencer:
                                           0, 0.0)
                 return (0.0, ao.torque_applied, 0.0, 0.0, 0.0, r.copy(),
                         q_cmd)
+            if cmd.phase in ("brake", "terminal", "done"):
+                self._relax_fins()
             if cmd.phase == "brake" or cmd.phase == "terminal":
                 self._guid_log.append(dict(cmd.info, t=self._t_now,
                                            phase=cmd.phase,

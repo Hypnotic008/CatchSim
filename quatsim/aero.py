@@ -33,7 +33,8 @@ If you do generate one, two things are worth checking in the results:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -247,6 +248,164 @@ class GridFinModel:
         """Peak available fin torque at full deflection, N m."""
         f = self.normal_force(mach, 0.0, self.deflection_limit, q_dyn)
         return float(abs(f * self.moment_arm))
+
+
+FIN_NAMES = ("rudder fin", "catch fin 90", "catch fin 270")
+# Azimuths in the spacecraft-models dimensions.md convention used by the CFD
+# (rocketcfd): 0 = rudder (middle) fin on body +z, 90 / 270 = the catch-fin
+# pair on body -y / +y.
+FIN_AZIMUTHS_DEG = (0.0, 90.0, 270.0)
+
+
+def fin_radial(az_deg: float) -> np.ndarray:
+    """Outward radial unit vector of a fin (its hinge axis), body frame."""
+    a = np.radians(az_deg)
+    return np.array([0.0, -np.sin(a), np.cos(a)])
+
+
+@dataclass
+class GridFinSet:
+    """
+    Super Heavy V3's three grid fins, each with its own deflection.
+
+    Each fin turns about its outward radial (hinge) axis. A deflection makes a
+    force along the fin's tangential direction x_body x radial at the fin's
+    centre of pressure, so:
+
+        rudder fin (+z)       side force along y  -> yaw and roll
+        catch fins (-y, +y)   force along z       -> pitch and roll
+
+    which makes the 3 x 3 torque-per-radian matrix B full rank: three fins give
+    independent pitch, yaw and roll. A commanded body torque is allocated as
+    delta = B^-1 tau, scaled back as a whole if any fin would pass its
+    deflection limit, then rate limited. Grid fins are the only roll authority
+    in the coast besides RCS, as on the real vehicle.
+
+    Control derivatives:
+      * default: the GridFinModel placeholder per fin (its cn_delta, transonic
+        effectiveness and planform area), so the pitch authority of the catch
+        pair is exactly the old fin model's. Yaw now comes from the single
+        rudder fin, half the old X-configuration's.
+      * load_cfd(path): fin_control.json from rocketcfd
+        (cases/fin_control_export.py), the per-fin moment derivatives from
+        deflected-fin CFD sweeps, interpolated in Mach at the nearest computed
+        angle of attack and roll.
+    """
+
+    base: GridFinModel = field(default_factory=GridFinModel)
+    arm: float = 30.0                  # m, fin centre of pressure ahead of the CoM
+    radius: float = 6.7                # m, axis to the fin centre of pressure
+    rate_limit: float = np.radians(40.0)
+    # Below q_active the fins hold neutral (RCS does the work): in near-vacuum
+    # they produce nothing, and slamming them to the stops would only show
+    # an allocator dividing by ~0. Full use from 2 x q_active.
+    q_active: float = 1_000.0          # Pa
+    S_ref: float = 63.6                # CFD reference area, m^2
+    L_ref: float = 72.3                # CFD reference length, m
+    cfd: dict | None = None            # per-fin tables, see load_cfd
+    cfd_source: str = ""
+
+    @property
+    def deflection_limit(self) -> float:
+        return self.base.deflection_limit
+
+    # --- compatibility with GridFinModel -------------------------------
+    def effectiveness(self, mach: float) -> float:
+        return self.base.effectiveness(mach)
+
+    def max_torque(self, mach: float, q_dyn: float) -> float:
+        """Peak pitch torque (the catch pair at full deflection), N m."""
+        B = self.matrix(mach, q_dyn)
+        return float(abs(B[1, 1]) + abs(B[1, 2])) * self.deflection_limit
+
+    # --- control derivatives -----------------------------------------------
+    def load_cfd(self, path: str) -> "GridFinSet":
+        with open(path) as fh:
+            d = json.load(fh)
+        tabs = {}
+        for name in FIN_NAMES:
+            rows = d["fins"].get(name, [])
+            if not rows:
+                raise ValueError(f"{path}: no rows for {name}")
+            tabs[name] = dict(mach=np.array([r["mach"] for r in rows], float),
+                              aoa=np.array([r["aoa"] for r in rows], float),
+                              roll=np.array([r["roll"] for r in rows], float),
+                              dM=np.array([r["dM"] for r in rows], float))
+        self.cfd = tabs
+        self.cfd_source = path
+        return self
+
+    def _cfd_column(self, name, mach, aoa_deg, roll_deg):
+        T = self.cfd[name]
+        # nearest computed (aoa, roll), then linear in Mach
+        da = np.abs(T["aoa"] - aoa_deg)
+        dr = np.abs(((T["roll"] - roll_deg) + 180.0) % 360.0 - 180.0)
+        sel = (da == da.min())
+        sel &= (dr == dr[sel].min())
+        m, dM = T["mach"][sel], T["dM"][sel]
+        o = np.argsort(m)
+        m, dM = m[o], dM[o]
+        if len(m) == 1:
+            return dM[0]
+        return np.array([np.interp(mach, m, dM[:, k]) for k in range(3)])
+
+    def matrix(self, mach: float, q_dyn: float, aoa_deg: float = 0.0,
+               roll_deg: float = 0.0) -> np.ndarray:
+        """Body torque per radian of each fin's deflection (columns), N m/rad."""
+        B = np.zeros((3, 3))
+        if q_dyn <= 0.0:
+            return B
+        if self.cfd is not None:
+            for k, name in enumerate(FIN_NAMES):
+                B[:, k] = q_dyn * self.S_ref * self.L_ref * self._cfd_column(
+                    name, mach, aoa_deg, roll_deg)
+            return B
+        F = (self.base.cn_delta * self.base.effectiveness(mach) * q_dyn
+             * self.base.area_per_fin)
+        ex = np.array([1.0, 0.0, 0.0])
+        for k, az in enumerate(FIN_AZIMUTHS_DEG):
+            rad = fin_radial(az)
+            tan = np.cross(ex, rad)
+            pos = self.arm * ex + self.radius * rad
+            B[:, k] = np.cross(pos, F * tan)
+        return B
+
+    def allocate(self, tau_des, mach, q_dyn, delta_prev, dt, aoa_deg=0.0,
+                 roll_deg=0.0):
+        """Fin deflections for a desired body torque.
+
+        Returns (delta [rad, 3], torque the fins actually produce [N m, 3])."""
+        B = self.matrix(mach, q_dyn, aoa_deg, roll_deg)
+        d_prev = np.asarray(delta_prev, float)
+        if not np.any(B) or q_dyn < self.q_active:
+            target = np.zeros(3)
+        else:
+            target = np.linalg.lstsq(B, np.asarray(tau_des, float), rcond=1e-6)[0]
+            over = float(np.max(np.abs(target))) / self.deflection_limit
+            if over > 1.0:
+                target = target / over               # keep the torque direction
+            target *= min(1.0, (q_dyn - self.q_active) / self.q_active)   # fade in
+        step = self.rate_limit * max(float(dt), 0.0)
+        delta = d_prev + np.clip(target - d_prev, -step, step)
+        return delta, B @ delta
+
+
+def wind_angles(q, v_air) -> tuple[float, float]:
+    """Angle of attack from engines-first [deg] and the windward roll azimuth
+    [deg, dimensions.md convention] of the relative wind, as the CFD tables
+    define them."""
+    v = np.asarray(v_air, float)
+    sp = float(np.linalg.norm(v))
+    if sp < 1e-6:
+        return 0.0, 0.0
+    e = Q.rotate_inverse(q, -v / sp)                # wind in body axes
+    aoa = float(np.degrees(np.arccos(np.clip(e[0], -1.0, 1.0))))
+    perp = np.array([0.0, e[1], e[2]])
+    if np.linalg.norm(perp) < 1e-9:
+        return aoa, 0.0
+    cross = perp / np.linalg.norm(perp)
+    ang = np.degrees(np.arctan2(-cross[2], -cross[1]))
+    return aoa, float((ang - 90.0) % 360.0)
 
 
 def restoring_moment(q: np.ndarray, velocity: np.ndarray, altitude: float,

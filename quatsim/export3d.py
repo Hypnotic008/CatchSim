@@ -46,10 +46,12 @@ RATE_APPROACH = 3.0
 RATE_LANDING = 1.0
 APPROACH_ALTITUDE = 8_000.0
 
-# Landing replays after the catch: (shot id, name, start, sim-time rate).
-# start: "ign" = 2 s before landing-burn ignition, a number = seconds before
-# the catch. Shot 0 is the main broadcast camera.
+# Replays after the catch: (shot id, name, start, sim-time rate[, end]).
+# start: "ign" = 2 s before landing-burn ignition, "ign-15" = 15 s before it,
+# a number = seconds before the catch. end (optional): "ign" = 2 s after
+# ignition; default the catch. Shot 0 is the main broadcast camera.
 REPLAYS = [
+    (5, "FIN CAM", "ign-15", 1.0, "ign"),
     (1, "SIDE VIEW", "ign", 1.0),
     (2, "OVERHEAD", 18.0, 0.75),
     (3, "TOWER CAM", 9.0, 1.0),
@@ -97,15 +99,18 @@ def playback_schedule(out, fps=30, hold=6.0, replays=REPLAYS):
     shot = np.zeros(len(ft), int)
     le = out.get("landing_events", {}) or {}
     t_ign = le.get("ignition_t", np.nan)
-    for sid, _, start, rate in replays or []:
-        if start == "ign":
+    for rp in replays or []:
+        sid, _, start, rate = rp[:4]
+        end = rp[4] if len(rp) > 4 else None
+        if isinstance(start, str) and start.startswith("ign"):
             if not np.isfinite(t_ign):
                 continue
-            t0 = float(t_ign) - 2.0
+            t0 = float(t_ign) - (2.0 if start == "ign" else float(start[3:].lstrip("-")))
         else:
             t0 = float(t[-1]) - float(start)
-        seg = np.arange(max(t0, float(t[0])), float(t[-1]), rate / fps)
-        seg = np.concatenate([seg, np.full(int(0.8 * fps), t[-1])])   # beat at the catch
+        t1 = float(t[-1]) if end is None else min(float(t_ign) + 2.0, float(t[-1]))
+        seg = np.arange(max(t0, float(t[0])), t1, rate / fps)
+        seg = np.concatenate([seg, np.full(int(0.8 * fps), t1)])     # beat at the end
         ft = np.concatenate([ft, seg])
         fr = np.concatenate([fr, np.full(len(seg), rate)])
         shot = np.concatenate([shot, np.full(len(seg), sid)])
@@ -137,6 +142,7 @@ def export_mission(out: dict, target, report: dict | None, path: str,
     nl = np.asarray(out["n_lit"], int)[::stride]
     prop = np.asarray(out["prop"], float)[::stride]
     tilt = np.asarray(out["tilt"], float)[::stride]
+    fins = np.asarray(out.get("fin_deflection", np.zeros((len(out["t"]), 3))), float)[::stride]
 
     qo = np.array([Q.multiply(Q_M, qq) for qq in q])       # world = M R(q)
     # keep quaternion sign continuous for interpolation
@@ -185,10 +191,11 @@ def export_mission(out: dict, target, report: dict | None, path: str,
         "n_lit": nl.tolist(),
         "prop": np.round(prop / 1000.0, 2).tolist(),
         "tilt": np.round(tilt, 3).tolist(),
+        "fins": np.round(fins, 2).ravel().tolist(),   # deg: rudder, catch 90, catch 270
         "frames": {"t": np.round(ft, 4).tolist(),
                    "rate": np.round(fr, 3).tolist(), "fps": fps,
                    "shot": shot.tolist(),
-                   "shots": {str(sid): name for sid, name, _, _ in REPLAYS}},
+                   "shots": {str(rp[0]): rp[1] for rp in REPLAYS}},
         "target": to_three(tgt).tolist(),
         "target_enu": tgt.tolist(),
         "events": events,

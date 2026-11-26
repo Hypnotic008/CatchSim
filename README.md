@@ -258,6 +258,32 @@ eased transitions and a 6 s hold on the caught booster.
   nominal flight that is 13 → 5 at ~1000 m and 5 → 3 at ~330 m.
   `LandingConfig(n_mid=0)` restores the old 13 → 3 burn.
 
+## Working grid fins
+
+`GridFinSet` (`quatsim/aero.py`) models V3's three grid fins, each with its
+own deflection about its radial hinge axis.
+- **Rudder fin (+z):** deflecting it gives yaw and roll.
+- **Catch pair (±y):** gives pitch and roll.
+
+Between them the three give independent pitch, yaw and roll. The
+engines-off attitude controller allocates its torque to the three
+deflections. Each fin is limited to ±20° and 40°/s, and the fins hold
+neutral below 1 kPa of dynamic pressure, where they would only show an
+allocator dividing by nearly zero. RCS supplies whatever the fins cannot
+deliver.
+
+The deflections are logged (`fin_deflection`) and animated in the 3-D
+viewer. The replays open with a FIN CAM shot, from a camera riding on the
+booster, covering the 15 s of entry before ignition.
+
+Control derivatives:
+- **Default:** the old placeholder authority, per fin. The catch pair's pitch
+  authority is exactly the old model's; yaw comes from the single rudder fin.
+- **From the CFD:** `python run_mission.py --fin-cfd fin_control.json`, using
+  the per-fin moment derivatives from rocketcfd's deflected-fin sweeps
+  (`cases/fin_control_export.py --base db_d0 --rudder db_rudder10:10
+  --catch90 db_catch10:10`).
+
 ## Modelling notes and honest limits
 
 - Aerodynamic coefficients (drag, weathercocking `cm_alpha`, body `cn_alpha`,

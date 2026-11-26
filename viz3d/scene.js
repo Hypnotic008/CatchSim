@@ -80,7 +80,8 @@ function stateAt(t) {
   const k = f < 0.5 ? i : j;
   // the final logged sample carries throttle 0; hold the last burn state
   const last = i >= N - 2;
-  return { t, i: k, p, v, q, phase: M.phase[last ? N - 2 : k],
+  const fins = M.fins ? [0, 1, 2].map((c) => M.fins[3 * i + c] + f * (M.fins[3 * j + c] - M.fins[3 * i + c])) : [0, 0, 0];
+  return { t, i: k, p, v, q, fins, phase: M.phase[last ? N - 2 : k],
            throttle: last ? 0 : M.throttle[k], n: last ? 0 : M.n_lit[k],
            prop: M.prop[k], tilt: M.tilt[k] };
 }
@@ -393,6 +394,7 @@ function bellGeometry() {
 
 const booster = new THREE.Group();
 scene.add(booster);
+const finMeshes = [];                           // deflect about their radial (local z) hinge axes
 const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness: 0.7, roughness: 0.3,
                                                   envMapIntensity: 1.0 });
 // Azimuths as in the CFD model's dimensions.md convention: 0 = rudder (middle)
@@ -501,8 +503,9 @@ const azYZ = (deg, r) => [-r * Math.sin(THREE.MathUtils.degToRad(deg)), r * Math
   // grid fins (toothed V3 fins from the CFD geometry) on round bearing pods:
   // the middle ("rudder") fin on body +Z, the catch pair at +/-90 deg. At the
   // catch body +Z points away from the tower, so the pair lies across the arms.
-  for (const deg of [0, 90, 270]) {
+  for (const deg of [0, 90, 270]) {             // order matches M.fins: rudder, catch 90, catch 270
     const f = gridFin();
+    finMeshes.push(f);
     const piv = new THREE.Group();
     piv.rotation.x = THREE.MathUtils.degToRad(deg);
     f.position.set(FIN_X, 0, R_BOOSTER);
@@ -1144,6 +1147,15 @@ function replayCam(st, shot, shotT) {
     camera.position.copy(TARGET).setY(340).addScaledVector(SIDE_DIR, 75).addScaledVector(APPROACH_DIR, -35);
     camera.lookAt(p.clone().lerp(TARGET, 0.3));
     camera.fov = frameFov(camera.position.distanceTo(p), L_BOOSTER * 2.2 + 30);
+  } else if (shot === 5) {
+    // FIN CAM: riding on the booster beside a catch fin, looking up the hull
+    // at it as the fins steer the entry (body frame, so the camera moves with
+    // the vehicle and the fin deflections read directly).
+    const toW = (x, y, z) => new THREE.Vector3(x, y, z).applyQuaternion(st.q).add(p);
+    camera.position.copy(toW(FIN_X - 16.0, R_BOOSTER + 9.0, 5.5));
+    camera.up.copy(new THREE.Vector3(1, 0, 0).applyQuaternion(st.q));   // nose up in frame
+    camera.lookAt(toW(FIN_X - 0.5, R_BOOSTER + 2.0, 0.0));
+    camera.fov = 40;
   } else if (shot === 3) {
     // TOWER CAM: on the front of the top frame, looking out at the incoming
     // booster and down onto the arms as it settles.
@@ -1296,6 +1308,7 @@ function drawAt(simT, rate, videoT, holdT, shot = 0, shotT = 0) {
   const st = stateAt(simT);
   booster.position.copy(st.p);
   booster.quaternion.copy(st.q);
+  finMeshes.forEach((f, c) => { f.rotation.z = THREE.MathUtils.degToRad(st.fins[c]); });
 
   // engines and plumes
   const litSet = new Set(M.engines.lit[String(st.n)] || []);

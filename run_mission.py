@@ -26,7 +26,7 @@ import time
 
 import numpy as np
 
-from quatsim.aero import AeroModel, GridFinModel
+from quatsim.aero import AeroModel, GridFinModel, GridFinSet
 from quatsim.control import AttitudeController, ControlGains
 from quatsim.mission import (SeparationState, build_mission, mission_report,
                              propagate_flip, solve_boostback)
@@ -69,7 +69,11 @@ def report(out, n: int | None = None) -> dict:
 def build():
     vehicle = Vehicle(prop_mass=500e3)
     aero = AeroModel()
-    fins = GridFinModel()
+    # Three grid fins with their own deflections (rudder + catch pair).
+    # CATCHSIM_FIN_CFD = fin_control.json from rocketcfd for CFD derivatives.
+    fins = GridFinSet()
+    if os.environ.get("CATCHSIM_FIN_CFD"):
+        fins.load_cfd(os.environ["CATCHSIM_FIN_CFD"])
 
     # Separation state calibrated against Flight 13: downrange fitted to the
     # 51 km splashdown, which then independently predicted the measured 11 s
@@ -156,11 +160,16 @@ def main(argv=None):
     ap.add_argument("--tower", type=int, choices=(1, 2), default=TOWER_NUMBER,
                     help="catch tower: 2 = Tower 2, arms facing SSW (default);\n"
                          "1 = Tower 1, arms facing the ocean")
+    ap.add_argument("--fin-cfd", default=None, metavar="JSON",
+                    help="grid fin control derivatives from rocketcfd\n"
+                         "(fin_control.json from cases/fin_control_export.py)")
     ap.add_argument("--no-steer", action="store_true",
                     help="disable grid-fin entry steering (for comparison)")
     args = ap.parse_args(argv)
     TOWER_NUMBER = args.tower
     os.environ["CATCHSIM_TOWER"] = str(args.tower)
+    if args.fin_cfd:
+        os.environ["CATCHSIM_FIN_CFD"] = os.path.abspath(args.fin_cfd)
 
     os.makedirs("figs", exist_ok=True)
     t0 = time.time()
