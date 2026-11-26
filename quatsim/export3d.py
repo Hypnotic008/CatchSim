@@ -176,6 +176,25 @@ def export_mission(out: dict, target, report: dict | None, path: str,
     return path
 
 
+def _models_js(viz_dir: str, max_mb: float = 60.0) -> str:
+    """Inline optional viz3d/assets/models/*.glb (and models.json) so the
+    single-file viewer shows them too."""
+    import base64
+    import json
+    import os
+    d = os.path.join(viz_dir, "assets", "models")
+    out = {}
+    for name in ("booster", "tower"):
+        p = os.path.join(d, name + ".glb")
+        if os.path.exists(p) and os.path.getsize(p) < max_mb * 2 ** 20:
+            out[name] = base64.b64encode(open(p, "rb").read()).decode()
+    cfg = os.path.join(d, "models.json")
+    js = "window.MODELS_B64 = " + json.dumps(out) + ";\n"
+    if os.path.exists(cfg):
+        js += "window.MODEL_CONFIG = " + json.dumps(json.load(open(cfg))) + ";\n"
+    return js
+
+
 def build_viewer(mission_json: str, out_html: str,
                  viz_dir: str | None = None,
                  three_version: str = "0.170.0") -> str:
@@ -199,7 +218,8 @@ def build_viewer(mission_json: str, out_html: str,
                         f'"{cdn}/examples/jsm/"')
     html = html.replace('<script type="module" src="./scene.js"></script>',
                         "<script>window.MISSION = " + data + ";\n"
-                        'window.GRIDFIN_B64 = "' + fin + '";</script>\n'
+                        'window.GRIDFIN_B64 = "' + fin + '";\n'
+                        + _models_js(viz_dir) + '</script>\n'
                         '<script type="module">\n' + js + "\n</script>")
     with open(out_html, "w") as fh:
         fh.write(html)

@@ -176,11 +176,14 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   chopsticks at the catch) and 33 bells in the webcast layout. Plumes expand into translucent vacuum
   plumes at altitude and tighten to shock-diamond plumes near the ground.
   The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 5 → 3).
-- **Tower:** lattice tower with chopsticks that close as the booster
+- **Tower:** lattice tower with truss chopsticks (catch rails, shock-absorbing
+  carts, bumpers) on a carriage that wraps the tower and hangs from the
+  drawworks cables. The chopsticks close as the booster
   arrives, launch mount and tank farm. Tower 2 by default: the rig is
   rotated to its real heading, with the arms opening south-southwest and
   the tower north of the catch point. `--tower 1` gives the ocean-facing
-  Tower 1.
+  Tower 1. Your own `booster.glb` / `tower.glb` in `viz3d/assets/models/`
+  replace the procedural models (see the README there).
 - **Cameras:** one continuous move from separation to the approach: a chase
   orbit through flip and boostback that swings up behind the booster to
   look down on it and ahead toward the Earth and the tower through the coast.
@@ -218,6 +221,14 @@ eased transitions and a 6 s hold on the caught booster.
   smallest gap between the hull and the tower or open arms along the whole
   path. `python run_mission.py --tower 1` (or `CATCHSIM_TOWER=1`) flies the
   ocean-facing Tower 1 instead.
+- **Approach corridor hold.** The first Tower 2 Monte Carlo caught 38 of 41.
+  The three misses met every catch criterion but clipped an arm by 1–3 m.
+  They had 11–12 m/s of wind, and the 3-engine final approach was still
+  closing 10–20 m of error across the arms when the hull reached arm height.
+  The terminal guidance now slows the descent in the 30 m above the arms
+  (down to a hover at arm height) whenever the error across the arms
+  exceeds 2 m. Holds last 3–6 s in those cases, and all three are now
+  caught with 2–2.5 m of hull clearance.
 - **13 → 5 → 3 landing burn (Flight 14).** The brake ignites on 13 engines
   and drops to 5 once five engines can finish the energy-matched brake with
   20% throttle margin. Until then the 13 brake hard (85% of full thrust), so

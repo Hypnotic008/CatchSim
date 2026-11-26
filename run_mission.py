@@ -101,7 +101,10 @@ AIM_X_1200 = 200.0
 
 
 def landing_config() -> LandingConfig:
-    return LandingConfig(target=TARGET.copy(), catch_roll_axis=tower().facing)
+    tw = tower()
+    return LandingConfig(target=TARGET.copy(), catch_roll_axis=tw.facing,
+                         corridor_across=tw.across[:2],
+                         arm_height=float(TARGET[2]) + 35.0)
 
 
 def fly(t33, vehicle, aero, sep, bb0, land, seq, dt=0.02, log_every=20,

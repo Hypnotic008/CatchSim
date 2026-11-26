@@ -15,6 +15,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const params = new URLSearchParams(location.search);
 const RENDER = params.has('render');
@@ -586,25 +587,104 @@ scene.add(towerRig);
   deck.position.set(TOWER_X, TH, 0); deck.castShadow = true; towerRig.add(deck);
 }
 
-// chopsticks: carriage on the tower face, two arms hinged at the face corners
+// chopsticks: a carriage wrapped round three faces of the tower, hoisted by
+// cables from the drawworks on top, and two box-truss arms hinged at the
+// face corners with catch rails and shock-absorbing carts under the fins.
 const FACE_X = TOWER_X + TW / 2;
-const carriage = new THREE.Mesh(new THREE.BoxGeometry(3.5, 9, TW + 4), darkMat);
-carriage.position.set(FACE_X + 1.2, ARM_Y + 1.5, 0);
-carriage.castShadow = true;
-towerRig.add(carriage);
+const steelDark = new THREE.MeshStandardMaterial({ color: 0x2f3134, metalness: 0.65, roughness: 0.5 });
+const _up = new THREE.Vector3(0, 1, 0);
+function strut(parent, a, b, t, mat, h = t) {
+  const d = b.clone().sub(a), len = d.length();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(t, len, h), mat);
+  m.quaternion.setFromUnitVectors(_up, d.normalize());
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.castShadow = true; m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const carriage = new THREE.Group();
+{
+  const ch = 10.0, wrap = TW / 2 + 1.4;
+  // front plate across the arm face, side plates wrapping round the tower
+  const front = new THREE.Mesh(new THREE.BoxGeometry(1.6, ch, TW + 3.0), darkMat);
+  front.position.set(FACE_X + 1.0, 0, 0); carriage.add(front);
+  for (const sd of [1, -1]) {
+    const side = new THREE.Mesh(new THREE.BoxGeometry(TW + 1.0, ch * 0.8, 1.2), darkMat);
+    side.position.set(TOWER_X + 0.5, -0.6, sd * wrap); carriage.add(side);
+    // guide rollers on the tower legs
+    for (const yy of [-ch / 2 + 1, ch / 2 - 1]) {
+      const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 16), steelDark);
+      roller.rotation.x = Math.PI / 2; roller.position.set(FACE_X - 0.4, yy, sd * (TW / 2 + 0.2));
+      carriage.add(roller);
+    }
+  }
+  carriage.children.forEach((c) => { c.castShadow = true; c.receiveShadow = true; });
+  carriage.position.set(0, ARM_Y + 1.5, 0);
+  towerRig.add(carriage);
+  // hoist cables: carriage top to the drawworks sheaves
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.4, roughness: 0.6 });
+  for (const zc of [-3.2, -1.1, 1.1, 3.2]) {
+    strut(towerRig, V3(FACE_X - 1.5, ARM_Y + 1.5 + ch / 2, zc), V3(FACE_X - 1.5, TH + 3.0, zc), 0.12, cableMat);
+  }
+}
+// drawworks on the tower top: a frame, the winch house and the sheaves
+{
+  const top = new THREE.Group();
+  const house = new THREE.Mesh(new THREE.BoxGeometry(TW - 2, 6.5, TW - 1), darkMat);
+  house.position.set(TOWER_X - 0.5, TH + 4.3, 0); top.add(house);
+  for (const zc of [-2.15, 2.15]) {
+    const sheave = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.6, 32), steelDark);
+    sheave.rotation.x = Math.PI / 2; sheave.position.set(FACE_X - 1.5, TH + 3.0, zc); top.add(sheave);
+  }
+  const boom = strut(top, V3(TOWER_X - 3, TH + 7.5, 0), V3(FACE_X + 2.5, TH + 9.5, 0), 0.9, towerMat, 1.2);
+  boom.castShadow = true;
+  top.children.forEach((c) => { c.castShadow = true; });
+  towerRig.add(top);
+}
 const arms = [];
 for (const side of [+1, -1]) {
   const hinge = new THREE.Group();
   hinge.position.set(FACE_X + 2.5, ARM_Y, side * 5.9);
-  const armLen = 33.0;
+  const armLen = 33.0, hh = 1.9, hw = 0.95;
   const arm = new THREE.Group();
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(armLen, 3.6, 1.8), towerMat);
-  beam.position.set(armLen / 2, 0, 0); beam.castShadow = true;
-  const rail = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.55, 0.9, 0.9), darkMat);
-  rail.position.set(armLen * 0.62, 2.0, -side * 0.45);        // catch rail on top, inner edge
-  const truss = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.95, 0.4, 2.2), darkMat);
-  truss.position.set(armLen / 2, -1.9, 0);
-  arm.add(beam, rail, truss);
+  // box truss: four chords, verticals and diagonals on every face, tapered
+  // toward the tip so it reads as the real tapered chopstick
+  const taper = (x) => 1.0 - 0.35 * x / armLen;
+  const P = (x, sy, sz) => V3(x, sy * hh * taper(x), sz * hw * taper(x));
+  const bays = 11;
+  for (const [sy, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) strut(arm, P(0, sy, sz), P(armLen, sy, sz), 0.42, towerMat);
+  for (let k = 0; k <= bays; k++) {
+    const x0 = armLen * k / bays, x1 = armLen * (k + 1) / bays;
+    for (const sz of [1, -1]) strut(arm, P(x0, 1, sz), P(x0, -1, sz), 0.26, towerMat);
+    for (const sy of [1, -1]) strut(arm, P(x0, sy, 1), P(x0, sy, -1), 0.22, towerMat);
+    if (k < bays) {
+      for (const sz of [1, -1]) strut(arm, P(x0, (k % 2 ? 1 : -1), sz), P(x1, (k % 2 ? -1 : 1), sz), 0.2, towerMat);
+      strut(arm, P(x0, 1, 1), P(x1, 1, -1), 0.16, steelDark);
+    }
+  }
+  // closed web over the root third, where the bending load is highest
+  const web = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.3, 2 * hh * 0.97, 0.12), steelDark);
+  web.position.set(armLen * 0.15, 0, -side * hw * 0.96); arm.add(web);
+  // catch rail along the inner top edge, and the shock-absorbing cart that
+  // the grid-fin hardpoint lands on
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.55, 0.5, 0.7), darkMat);
+  rail.position.set(armLen * 0.62, hh * taper(armLen * 0.62) + 0.25, -side * 0.45); arm.add(rail);
+  const cart = new THREE.Group();
+  const cartBody = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 1.5), new THREE.MeshStandardMaterial({ color: 0xc8a228, metalness: 0.3, roughness: 0.55 }));
+  cartBody.position.y = 0.55; cart.add(cartBody);
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 1.3), new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 }));
+  pad.position.y = 1.2; cart.add(pad);
+  cart.position.set(armLen * 0.62, hh * taper(armLen * 0.62) + 0.5, -side * 0.45);
+  cart.children.forEach((c) => { c.castShadow = true; });
+  arm.add(cart);
+  // bumper on the inner face that the hull settles against
+  const bumper = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.4, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: 0x202020, roughness: 0.95 }));
+  bumper.position.set(armLen * 0.6, 0, -side * (hw * 0.8 + 0.25)); arm.add(bumper);
+  // hinge knuckle
+  const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 2 * hh + 1.2, 24), steelDark);
+  knuckle.castShadow = true; hinge.add(knuckle);
+  arm.children.forEach((c) => { c.castShadow = true; c.receiveShadow = true; });
   hinge.add(arm);
   towerRig.add(hinge);
   arms.push({ hinge, side });
@@ -892,6 +972,92 @@ function director(st, videoT, holdT) {
     camera.lookAt(look);
   }
   camera.updateProjectionMatrix();
+}
+
+// ---------------------------------------------------------------------------
+// optional external models: viz3d/assets/models/booster.glb and tower.glb
+// (see the README there). Each replaces the procedural model; the plumes,
+// engine glow and the animated chopsticks stay procedural unless the model
+// configuration says the file brings its own.
+
+async function fetchJSON(u) {
+  try { const r = await fetch(u); return r.ok ? await r.json() : {}; } catch (e) { return {}; }
+}
+const MODEL_CFG = window.MODEL_CONFIG || await fetchJSON('./assets/models/models.json');
+async function loadModel(name) {
+  const loader = new GLTFLoader();
+  try {
+    const b64 = window.MODELS_B64 && window.MODELS_B64[name];
+    if (b64) {
+      const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      return (await loader.parseAsync(bin.buffer, '')).scene;
+    }
+    const file = (MODEL_CFG[name] && MODEL_CFG[name].file) || `${name}.glb`;
+    const r = await fetch(`./assets/models/${file}`);
+    if (!r.ok) return null;
+    return (await loader.parseAsync(await r.arrayBuffer(), './assets/models/')).scene;
+  } catch (e) { console.warn(`model ${name}:`, e.message); return null; }
+}
+const deg = THREE.MathUtils.degToRad;
+// Put the model's long axis on `axis` ('x' or 'y'), scale it to `length` m,
+// and return it wrapped in a group whose bounding box is known.
+function fitModel(root, cfg, axis, length) {
+  const holder = new THREE.Group();
+  holder.add(root);
+  root.updateMatrixWorld(true);
+  if (cfg.rotation) root.rotation.set(...cfg.rotation.map(deg));
+  else {
+    const sz = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+    const longest = sz.x >= sz.y && sz.x >= sz.z ? 'x' : (sz.y >= sz.z ? 'y' : 'z');
+    if (axis === 'x' && longest === 'y') root.rotation.z = -Math.PI / 2;     // +Y (nose up) -> +X
+    if (axis === 'x' && longest === 'z') root.rotation.y = Math.PI / 2;      // +Z -> +X
+    if (axis === 'y' && longest === 'x') root.rotation.z = Math.PI / 2;
+    if (axis === 'y' && longest === 'z') root.rotation.x = -Math.PI / 2;
+  }
+  if (cfg.flip) root.rotation.z += Math.PI;
+  holder.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(holder);
+  const sz = box.getSize(new THREE.Vector3());
+  const k = (cfg.scale || 1) * length / (axis === 'x' ? sz.x : sz.y);
+  holder.scale.setScalar(k);
+  holder.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return { holder, box, k };
+}
+if (MODEL_CFG.booster !== false) {
+  const m = await loadModel('booster');
+  if (m) {
+    const cfg = MODEL_CFG.booster || {};
+    const { holder, box, k } = fitModel(m, cfg, 'x', cfg.length || L_BOOSTER);
+    const c = box.getCenter(new THREE.Vector3());
+    // aft end at AFT_X, centred on the body axis, then the fin roll
+    holder.position.set(AFT_X - k * box.min.x, -k * c.y, -k * c.z);
+    const roll = new THREE.Group();
+    roll.rotation.x = deg(cfg.roll || 0);
+    roll.add(holder);
+    const keep = new Set([engineLight, ...engines.map((e) => e.group)]);
+    booster.children.forEach((o) => { if (!keep.has(o)) o.visible = false; });
+    if (cfg.hide_bells !== false) engines.forEach((e) => { e.bell.visible = false; });
+    booster.add(roll);
+    console.log('booster model loaded');
+  }
+}
+if (MODEL_CFG.tower !== false) {
+  const m = await loadModel('tower');
+  if (m) {
+    const cfg = MODEL_CFG.tower || {};
+    const { holder, box, k } = fitModel(m, cfg, 'y', cfg.height || TH);
+    const c = box.getCenter(new THREE.Vector3());
+    holder.position.set(TOWER_X - k * c.x, -k * box.min.y, -k * c.z);
+    const yaw = new THREE.Group();
+    yaw.add(holder);
+    // the model's arms must open toward tower-local +X; `yaw` turns it there
+    yaw.position.set(TOWER_X, 0, 0); holder.position.x += -TOWER_X;
+    yaw.rotation.y = deg(cfg.yaw || 0);
+    const keep = new Set(cfg.has_arms ? [] : [carriage, ...arms.map((a) => a.hinge)]);
+    towerRig.children.forEach((o) => { if (!keep.has(o)) o.visible = false; });
+    towerRig.add(yaw);
+    console.log('tower model loaded');
+  }
 }
 
 // ---------------------------------------------------------------------------

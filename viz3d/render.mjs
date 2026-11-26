@@ -26,7 +26,8 @@ const FFMPEG = args.ffmpeg || process.env.FFMPEG || 'ffmpeg';
 const WORKERS = parseInt(args.workers || '3', 10);
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
-               '.json': 'application/json', '.css': 'text/css', '.png': 'image/png' };
+               '.json': 'application/json', '.css': 'text/css', '.png': 'image/png',
+               '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream' };
 function serve(root) {
   const srv = http.createServer((req, res) => {
     const p = path.join(root, decodeURIComponent(req.url.split('?')[0]));

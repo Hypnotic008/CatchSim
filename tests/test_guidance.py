@@ -187,3 +187,21 @@ def test_landing_without_mid_stage_is_13_to_3():
     cmd = lg.step(np.array([0.0, 0.0, 900.0]), np.array([0.0, 0.0, -110.0]),
                   q, 110e3, 3.0)
     assert cmd.n_lit == 13
+
+
+def test_corridor_hold_slows_descent_when_not_lined_up_with_the_arms():
+    """Hull bottom just above the arms, 10 m off across them: the descent is
+    held back (more thrust) compared with no corridor; lined up, no effect."""
+    from quatsim.landing import TERMINAL
+    veh, aero = Vehicle(prop_mass=500e3), AeroModel()
+    q = attitude_from_pointing(np.array([0.0, 0.0, 1.0]))
+    across = np.array([1.0, 0.0])
+    def cmd(cfg, x):
+        lg = LandingGuidance(cfg, veh, aero)
+        lg.phase, lg.n_lit, lg.handover_t = TERMINAL, 3, 0.0
+        return lg.step(np.array([x, 0.0, 178.0]), np.array([0.0, 0.0, -8.0]),
+                       q, 80e3, 1.0)
+    base = LandingConfig()
+    held = LandingConfig(corridor_across=across, arm_height=140.0)
+    assert cmd(held, 10.0).throttle > cmd(base, 10.0).throttle + 0.02
+    assert cmd(held, 0.5).throttle == pytest.approx(cmd(base, 0.5).throttle)

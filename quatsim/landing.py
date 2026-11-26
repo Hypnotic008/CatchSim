@@ -179,6 +179,19 @@ class LandingConfig:
     roll_lock_window: float = np.radians(35.0)
     roll_min_duration: float = 6.0        # s
 
+    # --- approach corridor (tower arms) -----------------------------------
+    # With Tower 2 the returning booster comes in ACROSS the open arms. If the
+    # error across the arms is still larger than `corridor_halfwidth` when the
+    # hull's lower end nears arm height, the descent is slowed in proportion
+    # to the remaining gap (down to a hover at arm height) until the lateral
+    # law has lined the booster up between the arms. None = no corridor.
+    corridor_across: np.ndarray | None = None   # unit (x, y) across the arms
+    corridor_halfwidth: float = 2.0       # m, allowed across error at the arms
+    arm_height: float = 140.0             # m, arm (hardpoint) height above ground
+    hull_below_com: float = 30.0          # m, CoM to the lower end of the hull
+    hold_band: float = 30.0               # m above the arms where the hold acts
+    resume_accel: float = 1.5             # m/s^2, descent pick-up after a hold
+
 
 @dataclass
 class LandingCommand:
@@ -234,6 +247,8 @@ class LandingGuidance:
         self.handover_t = float("nan")
         self.mid_alt = float("nan")
         self.mid_t = float("nan")
+        self.hold_time = 0.0               # s spent slowed by the corridor hold
+        self._t_prev = None
         self.roll_start = None
         self._d_hat = np.zeros(2)
         self._obs_prev = None
@@ -388,6 +403,17 @@ class LandingGuidance:
             floor = c.throttle_floor
         else:
             v_ref, t_go_v, in_flare = self._terminal_profile(h_left)
+            if c.corridor_across is not None:
+                gap = h - c.hull_below_com - c.arm_height
+                ax = np.asarray(c.corridor_across, float)
+                c_err = abs(float((r[:2] - tgt[:2]) @ ax))
+                if 0.0 < gap + 5.0 and gap < c.hold_band \
+                        and c_err > c.corridor_halfwidth:
+                    v_cap = v_ref * float(np.clip(gap / c.hold_band, 0.0, 1.0))
+                    if v_cap < v_ref:
+                        v_ref, in_flare = v_cap, False
+                        if self._t_prev is not None:
+                            self.hold_time += t - self._t_prev
             # Feed-forward is the profile's own deceleration along the
             # ACTUAL descent: d(v_ref)/dt = a_flare * |vz| / v_ref. A constant
             # a_flare here held a stopped vehicle 0.1 m above the catch plane
@@ -397,13 +423,17 @@ class LandingGuidance:
                                               1.5))
                     if in_flare else 0.0)
             a_z = a_ff + c.k_v * ((-v_ref) - vz)
+            # After a corridor hold the vehicle is slower than the profile;
+            # pick the descent back up gently rather than diving at it.
+            if self.hold_time > 0.0:
+                a_z = max(a_z, -c.resume_accel)
             t_go = max(t_go_v, c.t_go_floor)
             # Same velocity-field law as the brake, sized for 3-engine
             # authority and capped so the approach speed is gone before the
             # final settle window. (The quadratic E-guidance plan, kept as
             # poly_accel, accelerates first and brakes late; with a closing
             # tilt envelope it overshot a 400 m handover error by 50 m.)
-            f_z_est = a_z + ENV.G0
+            f_z_est = max(a_z + ENV.G0, 0.3 * ENV.G0)
             a_d = c.term_lat_frac * f_z_est * np.tan(c.max_tilt_terminal)
             e = r[:2] - tgt[:2]
             d = float(np.linalg.norm(e))
@@ -456,6 +486,7 @@ class LandingGuidance:
         direction = f / max(fn, 1e-9)
         self._observe(t, v, q, m, drag, throttle)
 
+        self._t_prev = t
         info.update(t_go=t_go, a_x=float(a_des[0]), a_y=float(a_des[1]),
                     a_z=float(a_des[2]),
                     tilt_cmd=float(np.degrees(np.arccos(direction[2]))),

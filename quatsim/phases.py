@@ -572,6 +572,7 @@ class FlightSequencer:
             "ignition_speed": lg.ignition_speed,
             "mid_t": lg.mid_t, "mid_alt": lg.mid_alt,
             "n_mid": lg.cfg.n_mid,
+            "corridor_hold_s": lg.hold_time,
             "handover_t": lg.handover_t, "handover_alt": lg.handover_alt})
         return out
 
