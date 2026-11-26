@@ -1043,7 +1043,39 @@ function clock(t) {
   const s = Math.max(0, Math.floor(t)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
+// grid fin gauge: one bar per fin, filling up or down from the centre with its
+// deflection (full scale = the 20 deg limit)
+const finBars = (() => {
+  const svg = document.getElementById('finsvg');
+  if (!svg) return null;
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  const bars = [];
+  ['R', '90', '270'].forEach((lab, c) => {
+    const x = 10 + c * 24;
+    mk('rect', { x: x, y: 6, width: 10, height: 56, fill: 'rgba(244,244,242,0.10)', stroke: 'rgba(244,244,242,0.35)', 'stroke-width': 0.6 });
+    mk('line', { x1: x - 2, y1: 34, x2: x + 12, y2: 34, stroke: 'rgba(244,244,242,0.6)', 'stroke-width': 0.8 });
+    bars.push(mk('rect', { x: x + 1, y: 34, width: 8, height: 0, fill: '#ffffff' }));
+    const t = mk('text', { x: x + 5, y: 73, 'text-anchor': 'middle', 'font-size': 8.5, fill: 'rgba(244,244,242,0.8)', 'font-family': 'monospace' });
+    t.textContent = lab;
+  });
+  const cap = mk('text', { x: 38, y: 85, 'text-anchor': 'middle', 'font-size': 7.4, fill: 'rgba(244,244,242,0.65)', 'letter-spacing': 1.6 });
+  cap.textContent = 'GRID FINS';
+  return bars;
+})();
+function updateFins(fins) {
+  if (!finBars) return;
+  finBars.forEach((b, c) => {
+    const u = Math.max(-1, Math.min(1, (fins[c] || 0) / 20));
+    const hgt = Math.abs(u) * 27;
+    b.setAttribute('y', u >= 0 ? 34 - hgt : 34);
+    b.setAttribute('height', hgt);
+    b.setAttribute('fill', Math.abs(u) > 0.95 ? '#ffb020' : '#ffffff');
+  });
+}
+
 function updateHud(st, rate, holdFrac, shot = 0) {
+  updateFins(st.fins);
   const spd = st.v.length() * 3.6, alt = st.p.y / 1000;
   $('spd').innerHTML = `${fmt(spd)}<span class="u">KM/H</span>`;
   $('alt').innerHTML = alt >= 10 ? `${fmt(alt, 1)}<span class="u">KM</span>` : `${fmt(st.p.y)}<span class="u">M</span>`;

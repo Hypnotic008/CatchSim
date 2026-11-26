@@ -59,6 +59,8 @@
   #timeline .ev.alt .lab { top: 2.6vh; }
 
   #right { right: 3.2vw; bottom: 4.2vh; text-align: right; }
+  #fins { right: 3.2vw; bottom: 19.5vh; width: 8.4vw; height: 15vh; }
+  #fins svg { width: 100%; height: 100%; overflow: visible; }
 
   #score { right: 3.2vw; top: 14vh; width: 17vw; padding: 1.2vh 1vw; background: var(--panel);
     border-left: 2px solid var(--good); opacity: 0; transition: none; }
@@ -113,6 +115,7 @@
   <div class="ro"><div class="k">PROPELLANT</div><div class="v mono" id="prop">0</div></div>
 </div>
 
+<div id="fins" class="hud"><svg id="finsvg" viewBox="0 0 76 86"></svg></div>
 <div id="score" class="hud"></div>
 
 <div id="ui">
