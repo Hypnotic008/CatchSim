@@ -274,7 +274,9 @@ neutral below 1 kPa of dynamic pressure, where they would only show an
 allocator dividing by nearly zero. RCS supplies whatever the fins cannot
 deliver.
 
-The deflections are logged (`fin_deflection`) and animated in the 3-D
+The deflections are logged (`fin_deflection`), plotted by `--figures` in
+`figs/grid_fins.png` (each fin through the entry, alongside dynamic pressure
+and altitude), shown in a GRID FINS gauge on the HUD, and animated in the 3-D
 viewer. The replays open with a FIN CAM shot, from a camera riding on the
 booster, covering the 15 s of entry before ignition.
 

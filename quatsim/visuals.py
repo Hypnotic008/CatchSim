@@ -1087,3 +1087,71 @@ def animate_catch(out: dict, target: np.ndarray, path: str = "figs/catch.mp4",
                 progress(f"  frame {fi}/{n_frames}")
     plt.close(fig)
     return path
+
+
+def grid_fin_history(out: dict, path: str = "figs/grid_fins.png") -> str:
+    """
+    The three grid fins through the entry: each fin's deflection, with the
+    dynamic pressure that gives them authority and the altitude, on one
+    shared time axis (separate panels, no second y-scale).
+    """
+    from . import environment as ENV
+    _style()
+    t = np.asarray(out["t"], float)
+    r = np.asarray(out["r"], float)
+    v = np.asarray(out["v"], float)
+    fd = np.asarray(out.get("fin_deflection", np.zeros((len(t), 3))), float)
+    seg = np.asarray(out["segment"]).astype(str)
+    le = out.get("landing_events", {}) or {}
+    q = np.array([ENV.dynamic_pressure(v[i], float(r[i, 2])) for i in range(len(t))]) / 1e3
+    # window: from where the air starts to matter (q > 0.3 kPa on the way
+    # down) to a few seconds after ignition
+    down = np.arange(len(t)) > int(np.argmax(r[:, 2]))
+    thick = np.where(down & (q > 0.3))[0]
+    t0 = (t[thick[0]] - 8.0) if len(thick) else t[0]
+    t_ign = le.get("ignition_t", np.nan)
+    t1 = (t_ign + 4.0) if np.isfinite(t_ign) else t[-1]
+    m = (t >= t0) & (t <= t1)
+    tt = t[m] - t0
+
+    names = ("Rudder fin", "Catch fin 90°", "Catch fin 270°")
+    cols = ("#3987e5", "#d95926", "#199e70")     # fixed categorical order (validated, dark)
+    fig = plt.figure(figsize=(12, 8.2))
+    gs = fig.add_gridspec(3, 1, height_ratios=[2.2, 1, 1], hspace=0.28,
+                          left=0.07, right=0.88, top=0.88, bottom=0.07)
+    fig.text(0.07, 0.945, "Grid fins through the entry", fontsize=16, weight="bold")
+    fig.text(0.07, 0.915, "Each fin's deflection from the 3-fin allocation (±20° stops, "
+             "40°/s, neutral below 1 kPa); RCS covers the rest", fontsize=10, color=INK2)
+    a0 = fig.add_subplot(gs[0])
+    lim = 20.0
+    for y in (-lim, lim):
+        a0.axhline(y, color=MUTED, lw=1, ls=(0, (4, 4)))
+    a0.text(tt[0], lim + 0.8, "deflection limit", color=MUTED, fontsize=8)
+    for k in range(3):
+        a0.plot(tt, fd[m, k], color=cols[k], lw=2, label=names[k])
+        j = int(np.argmax(np.abs(fd[m, k])))          # label each fin at its largest deflection
+        up = fd[m, k][j] >= 0
+        a0.annotate(names[k], (tt[j], fd[m, k][j]), xytext=(0, 9 if up else -13),
+                    textcoords="offset points", color=INK2, fontsize=8.5, ha="center")
+    a0.set_ylim(-lim - 5, lim + 6)
+    a0.set_ylabel("deflection (deg)")
+    a0.set_title("Fin deflection")
+    a0.legend(loc="lower left", ncol=3)
+    a1 = fig.add_subplot(gs[1], sharex=a0)
+    a1.plot(tt, q[m], color=INK2, lw=2)
+    a1.set_ylabel("q (kPa)")
+    a1.set_title("Dynamic pressure")
+    a2 = fig.add_subplot(gs[2], sharex=a0)
+    a2.plot(tt, r[m, 2] / 1e3, color=INK2, lw=2)
+    a2.set_ylabel("altitude (km)")
+    a2.set_title("Altitude")
+    a2.set_xlabel("seconds from 8 s before the air starts to matter (q > 0.3 kPa)")
+    for a in (a0, a1, a2):
+        if np.isfinite(t_ign):
+            a.axvline(t_ign - t0, color=MUTED, lw=1)
+    a0.text(t_ign - t0, lim + 0.8, " landing burn", color=MUTED, fontsize=8)
+    for a in (a0, a1):
+        plt.setp(a.get_xticklabels(), visible=False)
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path

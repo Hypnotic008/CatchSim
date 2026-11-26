@@ -233,6 +233,7 @@ def main(argv=None):
     if args.figures:
         print(VIS.mission_overview(out, TARGET, rep,
                                    path="figs/mission_overview.png"))
+        print(VIS.grid_fin_history(out, path="figs/grid_fins.png"))
         print(VIS.landing_detail(out, TARGET, rep,
                                  path="figs/landing_detail.png"))
     if args.animate:
