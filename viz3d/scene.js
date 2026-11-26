@@ -22,11 +22,14 @@ const RENDER = params.has('render');
 const R_EARTH = 6371000.0;
 const L_BOOSTER = 72.3, R_BOOSTER = 4.5, COM_FRAC = 0.40;
 const AFT_X = -COM_FRAC * L_BOOSTER, NOSE_X = (1 - COM_FRAC) * L_BOOSTER;
-// V3 top end: the steel tank wall stops TOP_DROP below the nose; above it the
-// forward dome sits inside an open strut crown (the vented hot-stage ring).
-const TOP_DROP = 2.8, TOP_X = NOSE_X - TOP_DROP;
-// Grid fins (from the supplied STEP model) and the catch hardpoints under them.
-const FIN_X = TOP_X - 4.6;                             // fin mid-depth, body axis
+// Body stations follow the CFD model (rocketcfd vehicles/super_heavy.py, from
+// the photo-measured V3 dimensions): x0 = outer-ring nozzle exits = AFT_X,
+// hull from x0 + 2.75 (skirt) to x0 + 68.3 (tank top); above it the forward
+// dome sits inside the open hot-staging truss up to the nose (x0 + 72.3).
+const X0 = AFT_X;
+const TOP_X = X0 + 68.3;
+// Grid fins: 3.5 m wide, 4.2 m reach, 0.5 m deep, mid-depth at x0 + 65.35.
+const FIN_X = X0 + 65.35;                              // fin mid-depth, body axis
 const HARDPOINT_ABOVE_COM = FIN_X - 2.8;               // arms close here
 const SUN_DIR = new THREE.Vector3(0.55, 0.42, 0.72).normalize();
 
@@ -295,7 +298,7 @@ function makeEnvMap() {
   const s = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), eMat);
   envScene.add(s);
   const ground = new THREE.Mesh(new THREE.CircleGeometry(480, 32).rotateX(-Math.PI / 2),
-                                new THREE.MeshBasicMaterial({ color: 0x4d4538 }));
+                                new THREE.MeshBasicMaterial({ color: 0x8a8884 }));
   ground.position.y = -30;
   envScene.add(ground);
   const pm = new THREE.PMREMGenerator(renderer);
@@ -315,8 +318,9 @@ function steelTexture() {
   const g = c.getContext('2d');
   // v (canvas y) runs nose (top) -> aft (bottom) after the flip below
   const grd = g.createLinearGradient(0, 0, 0, h);
-  grd.addColorStop(0.0, '#cfd1d3'); grd.addColorStop(0.45, '#c3c5c7');
-  grd.addColorStop(0.72, '#9d9892'); grd.addColorStop(0.92, '#5d544c'); grd.addColorStop(1.0, '#3b342f');
+  // bright stainless, faintly heat-tinted toward the engines
+  grd.addColorStop(0.0, '#e4e6e8'); grd.addColorStop(0.5, '#dcdee0');
+  grd.addColorStop(0.82, '#cfcfcc'); grd.addColorStop(0.95, '#b9b4ad'); grd.addColorStop(1.0, '#a39b92');
   g.fillStyle = grd; g.fillRect(0, 0, w, h);
   // vertical sheen variation
   for (let x = 0; x < w; x += 2) {
@@ -328,7 +332,7 @@ function steelTexture() {
   const rows = Math.round(L_BOOSTER / 1.8);
   for (let r = 0; r < rows; r++) {
     const y = (r / rows) * h;
-    g.fillStyle = 'rgba(60,58,55,0.55)'; g.fillRect(0, y, w, 1.6);
+    g.fillStyle = 'rgba(70,68,66,0.28)'; g.fillRect(0, y, w, 1.4);
     g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(0, y + 1.6, w, 1);
     const off = (r % 2) * w / 12;
     for (let k = 0; k < 6; k++) { g.fillStyle = 'rgba(70,68,64,0.35)'; g.fillRect(off + k * w / 6, y, 1.4, h / rows); }
@@ -347,10 +351,10 @@ function steelTexture() {
   return t;
 }
 
-// Grid fin mesh baked from the supplied STEP model (quatsim/tools: int16 mm,
-// non-indexed triangles). Fin-local axes: x along the body axis (centred on
-// the 0.75 m lattice depth), y tangential (6 m span), z radial with the root
-// adapter at z = 0 and the tip at 7 m.
+// Grid fin mesh generated from the CFD fin parameters (viz3d/tools/
+// gridfin_mesh.py: int16 mm, non-indexed triangles): 3.5 m wide, 4.2 m reach,
+// 0.5 m deep, toothed on the face toward the engines. Fin-local axes: x along
+// the body axis (centred on the depth), y tangential, z radial from the hull.
 async function loadFinGeometry() {
   let buf;
   if (window.GRIDFIN_B64) {
@@ -359,7 +363,7 @@ async function loadFinGeometry() {
     for (let k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k);
     buf = buf.buffer;
   } else {
-    buf = await (await fetch('./assets/gridfin.i16')).arrayBuffer();
+    buf = await (await fetch('./assets/gridfin_v3.i16')).arrayBuffer();
   }
   const i16 = new Int16Array(buf);
   const pos = new Float32Array(i16.length);
@@ -378,36 +382,52 @@ function gridFin() {
   return m;
 }
 
+// Raptor 3 bell (CFD model: 0.65 m exit radius, 0.32 m at the throat end,
+// 2.0 m long), from the top (y = 0) down to the exit (y = -2), bell-curved.
+const BELL_LEN = 2.0;
 function bellGeometry() {
   const pts = [];
-  for (let k = 0; k <= 16; k++) { const u = k / 16; pts.push(new THREE.Vector2(0.28 + 0.34 * Math.pow(u, 0.7), -u * 1.7)); }
-  return new THREE.LatheGeometry(pts, 24);
+  for (let k = 0; k <= 20; k++) { const u = k / 20; pts.push(new THREE.Vector2(0.32 + 0.33 * Math.pow(u, 0.62), -u * BELL_LEN)); }
+  return new THREE.LatheGeometry(pts, 32);
 }
 
 const booster = new THREE.Group();
 scene.add(booster);
-const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness: 0.82, roughness: 0.34,
+const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness: 0.7, roughness: 0.3,
                                                   envMapIntensity: 1.0 });
+// Azimuths as in the CFD model's dimensions.md convention: 0 = rudder (middle)
+// grid fin on body +Z, 90 / 270 = the catch-fin pair on -Y / +Y.
+const azYZ = (deg, r) => [-r * Math.sin(THREE.MathUtils.degToRad(deg)), r * Math.cos(THREE.MathUtils.degToRad(deg))];
 {
-  const bodyLen = TOP_X - AFT_X;
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER, R_BOOSTER, bodyLen, 128, 1, true), steelMat);
+  const HULL0 = X0 + 2.75;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER, R_BOOSTER, TOP_X - HULL0, 160, 1, true), steelMat);
   body.rotation.z = -Math.PI / 2;                   // cylinder Y -> body +X (top -> nose)
-  body.position.x = (TOP_X + AFT_X) / 2;
+  body.position.x = (TOP_X + HULL0) / 2;
   body.castShadow = true; body.receiveShadow = true;
   booster.add(body);
-  const lightSteel = new THREE.MeshStandardMaterial({ color: 0xc9cbcd, metalness: 0.85, roughness: 0.3 });
-  // forward dome, rising inside the crown
+  const lightSteel = new THREE.MeshStandardMaterial({ color: 0xd2d4d6, metalness: 0.9, roughness: 0.26 });
+  const blackMat = new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0.35, roughness: 0.6 });
+  const darkSlot = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, metalness: 0.2, roughness: 0.8 });
+  const put = (mesh, x, deg, r) => {                // place a mesh on the hull at (x, azimuth)
+    const [y, z] = azYZ(deg, r);
+    mesh.position.set(x, y, z);
+    mesh.rotation.x = THREE.MathUtils.degToRad(deg);   // local +Z -> radial at this azimuth
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    booster.add(mesh);
+    return mesh;
+  };
+  // forward dome, rising inside the truss
   const dome = new THREE.Mesh(new THREE.SphereGeometry(R_BOOSTER - 0.05, 64, 16, 0, 2 * Math.PI, 0, Math.PI / 2),
                               lightSteel);
-  dome.scale.set(1, 0.42, 1);                       // shallow ellipsoidal head
+  dome.scale.set(1, 2.9 / R_BOOSTER, 1);            // 2.9 m rise
   dome.rotation.z = -Math.PI / 2; dome.position.x = TOP_X; dome.castShadow = true;
   booster.add(dome);
-  // open strut crown: a zig-zag of tubes between the tank rim and a top ring
+  // open hot-staging truss: a zig-zag of tubes between the tank rim and a top ring
   {
-    const nV = 14, rr = R_BOOSTER - 0.12, tube = 0.16;
-    const ringTop = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.2, 10, 128), lightSteel);
-    ringTop.rotation.y = Math.PI / 2; ringTop.position.x = NOSE_X - 0.2; booster.add(ringTop);
-    const ringBot = new THREE.Mesh(new THREE.TorusGeometry(R_BOOSTER - 0.02, 0.16, 10, 128), lightSteel);
+    const nV = 18, rr = R_BOOSTER - 0.1, tube = 0.13;
+    const ringTop = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.22, 10, 160), lightSteel);
+    ringTop.rotation.y = Math.PI / 2; ringTop.position.x = NOSE_X - 0.22; booster.add(ringTop);
+    const ringBot = new THREE.Mesh(new THREE.TorusGeometry(R_BOOSTER - 0.02, 0.18, 10, 160), lightSteel);
     ringBot.rotation.y = Math.PI / 2; ringBot.position.x = TOP_X; booster.add(ringBot);
     const strutGeo = new THREE.CylinderGeometry(tube, tube, 1, 8);
     const mk = (a0, x0, a1, x1) => {
@@ -422,50 +442,86 @@ const steelMat = new THREE.MeshStandardMaterial({ map: steelTexture(), metalness
     };
     for (let k = 0; k < nV; k++) {
       const a = k * 2 * Math.PI / nV, b = (k + 0.5) * 2 * Math.PI / nV, c = (k + 1) * 2 * Math.PI / nV;
-      mk(a, TOP_X + 0.1, b, NOSE_X - 0.25);
-      mk(b, NOSE_X - 0.25, c, TOP_X + 0.1);
+      mk(a, TOP_X + 0.15, b, NOSE_X - 0.3);
+      mk(b, NOSE_X - 0.3, c, TOP_X + 0.15);
     }
   }
-  // aft skirt and heat shield
-  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER + 0.12, R_BOOSTER + 0.12, 2.6, 96, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0x2b2826, metalness: 0.5, roughness: 0.7 }));
-  skirt.rotation.z = -Math.PI / 2; skirt.position.x = AFT_X + 1.3; booster.add(skirt);
-  const shield = new THREE.Mesh(new THREE.CircleGeometry(R_BOOSTER + 0.1, 64),
-    new THREE.MeshStandardMaterial({ color: 0x1b1a19, metalness: 0.3, roughness: 0.85, side: THREE.DoubleSide }));
-  shield.rotation.y = -Math.PI / 2; shield.position.x = AFT_X; booster.add(shield);
-  // grid fins: the middle ("third") fin on body +Z, the pair 180 deg apart at
-  // +/-90 deg from it (body +/-Y). At the catch body +Z points away from the
-  // tower, so the pair lies across the chopstick arms.
-  for (const a of [0, Math.PI / 2, -Math.PI / 2]) {
+  // chines: long fairings on the lower hull, outer face 5.85 m from the axis,
+  // bevelled at the top. Tall pair either side of the raceway, short pair
+  // either side of the rudder fin (CFD model: 160/200 deg to 36.8 m,
+  // 59/301 deg to 28.8 m, from 4.95 m).
+  {
+    const standoff = 1.35, width = 0.7;
+    for (const [deg, x0, x1] of [[160, 4.95, 36.8], [200, 4.95, 36.8], [59, 4.95, 28.8], [301, 4.95, 28.8]]) {
+      const len = x1 - x0, bev = 2.2;
+      const sh = new THREE.Shape();                  // profile in (x along body, r out from the hull)
+      sh.moveTo(0, -0.1); sh.lineTo(len, -0.1); sh.lineTo(len - bev, standoff); sh.lineTo(0.25, standoff);
+      sh.lineTo(0, standoff - 0.25); sh.lineTo(0, -0.1);
+      const geo = new THREE.ExtrudeGeometry(sh, { depth: width, bevelEnabled: false });
+      geo.translate(0, 0, -width / 2);
+      geo.rotateX(Math.PI / 2);                      // shape y (radial) -> +Z, extrusion -> -Y
+      geo.translate(X0 + x0, 0, R_BOOSTER);
+      const m = new THREE.Mesh(geo, lightSteel);
+      m.rotation.x = THREE.MathUtils.degToRad(deg);  // to its azimuth
+      m.castShadow = true; m.receiveShadow = true;
+      booster.add(m);
+    }
+  }
+  // raceway (178 deg, 36 -> 68 m) and a thin conduit on the rudder side with
+  // clamps every 2.5 m, from the vent band down to the engine section
+  {
+    const rw = new THREE.Mesh(new THREE.BoxGeometry(68 - 36, 0.3, 0.7), lightSteel);
+    put(rw, X0 + 52, 178, R_BOOSTER + 0.12);
+    const cd = new THREE.Mesh(new THREE.BoxGeometry(43.5 - 5.5, 0.1, 0.16), lightSteel);
+    put(cd, X0 + 24.5, 0, R_BOOSTER + 0.05);
+    for (let x = 6.5; x < 43; x += 2.5) put(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.34), darkSlot), X0 + x, 0, R_BOOSTER + 0.08);
+  }
+  // vent band round the common-dome station: a ring of dark slots
+  {
+    const slotGeo = new THREE.BoxGeometry(1.5, 0.08, 0.34);
+    for (let k = 0; k < 44; k++) {
+      const deg = (k + 0.5) * 360 / 44;
+      if (Math.abs(((deg + 180) % 360) - 180) < 6) continue;      // gap at the conduit
+      put(new THREE.Mesh(slotGeo, darkSlot), X0 + 46.4, deg, R_BOOSTER + 0.01);
+    }
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER + 0.03, R_BOOSTER + 0.03, 0.18, 160, 1, true), darkSlot);
+    ring.rotation.z = -Math.PI / 2; ring.position.x = X0 + 45.2; booster.add(ring);
+  }
+  // engine section: black band round the skirt with a row of light access
+  // panels, and the thrust plate the bells hang from
+  {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER + 0.06, R_BOOSTER + 0.14, 2.4, 160, 1, true), blackMat);
+    band.rotation.z = -Math.PI / 2; band.position.x = HULL0 + 1.2; band.castShadow = true; booster.add(band);
+    const panel = new THREE.BoxGeometry(0.42, 0.06, 0.62);
+    const panelMat = new THREE.MeshStandardMaterial({ color: 0x9a9a98, metalness: 0.6, roughness: 0.45 });
+    for (let k = 0; k < 36; k++) put(new THREE.Mesh(panel, panelMat), HULL0 + 0.55, k * 10 + 5, R_BOOSTER + 0.14);
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(R_BOOSTER + 0.1, R_BOOSTER - 0.6, 0.35, 96), blackMat);
+    plate.rotation.z = -Math.PI / 2; plate.position.x = X0 + 2.6; booster.add(plate);
+  }
+  // grid fins (toothed V3 fins from the CFD geometry) on round bearing pods:
+  // the middle ("rudder") fin on body +Z, the catch pair at +/-90 deg. At the
+  // catch body +Z points away from the tower, so the pair lies across the arms.
+  for (const deg of [0, 90, 270]) {
     const f = gridFin();
     const piv = new THREE.Group();
-    piv.rotation.x = -a;                             // rotate about the body axis
-    f.position.set(FIN_X, 0, R_BOOSTER - 0.05);
-    piv.add(f); booster.add(piv);
+    piv.rotation.x = THREE.MathUtils.degToRad(deg);
+    f.position.set(FIN_X, 0, R_BOOSTER);
+    const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.3, 32), finMat);
+    pod.rotation.x = Math.PI / 2; pod.position.set(FIN_X, 0, R_BOOSTER + 0.1);
+    piv.add(f, pod); booster.add(piv);
   }
   // catch hardpoints below the fin pair
-  for (const sgn of [1, -1]) {
-    const hp = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.2, 1.2), finMat);
-    hp.position.set(HARDPOINT_ABOVE_COM + 0.7, sgn * (R_BOOSTER + 0.45), 0);
-    booster.add(hp);
-  }
-  // raceway: cable/pressurisation conduit down the side opposite the middle fin
-  {
-    const len = TOP_X - 1.0 - (AFT_X + 3.0);
-    const rw = new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.32), lightSteel);
-    rw.position.set((TOP_X - 1.0 + AFT_X + 3.0) / 2, 0, -(R_BOOSTER + 0.14));
-    rw.castShadow = true; booster.add(rw);
-    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, len * 0.8, 10), lightSteel);
-    pipe.rotation.z = -Math.PI / 2;
-    pipe.position.set((TOP_X + AFT_X) / 2 + 3, 0.75, -(R_BOOSTER + 0.1));
-    booster.add(pipe);
+  for (const deg of [90, 270]) {
+    put(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.5), finMat), HARDPOINT_ABOVE_COM + 0.5, deg, R_BOOSTER + 0.25);
   }
 }
 
-// engines: layout from the exporter (unit radius = outer ring)
-const ENG_R = 3.82;
+// engines: layout from the exporter (unit radius = outer ring), placed on the
+// CFD model's rings: centre 3 at 1.1 m (exits 0.5 m below the outer ring),
+// middle 10 at 2.5 m (0.2 m below), outer 20 at 4.4 m, overhanging the hull.
+const engineRing = (r) => (r < 0.4 ? [1.1 / r, -0.5] : r < 0.8 ? [2.5 / r, -0.2] : [4.4 / r, 0.0]);
 const engines = [];
-const bellMat = new THREE.MeshStandardMaterial({ color: 0x3a3634, metalness: 0.7, roughness: 0.45,
+const bellMat = new THREE.MeshStandardMaterial({ color: 0x1c1c1d, metalness: 0.55, roughness: 0.42,
                                                  side: THREE.DoubleSide, emissive: 0x000000 });
 const plumeUniformsList = [];
 const plumeGeo = new THREE.CylinderGeometry(1, 1, 1, 40, 32, true).translate(0, -0.5, 0);
@@ -516,16 +572,25 @@ function plumeMaterial() {
 }
 {
   const bell = bellGeometry();
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2b, metalness: 0.6, roughness: 0.5 });
   for (let k = 0; k < 33; k++) {
     const [u, v] = M.engines.pos[k];
+    const [sc, dx] = engineRing(Math.hypot(u, v));
     const g = new THREE.Group();
-    g.position.set(AFT_X, u * ENG_R, v * ENG_R);
+    const xTop = X0 + dx + BELL_LEN;                // group origin at the top of the bell
+    g.position.set(xTop, u * sc, v * sc);
     const b = new THREE.Mesh(bell, bellMat.clone());
     b.rotation.z = -Math.PI / 2;                    // lathe -Y -> body -X (aft)
+    b.castShadow = true;
     g.add(b);
+    // powerhead up to the thrust plate
+    const hLen = X0 + 2.6 - xTop;
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.4, hLen, 16), headMat);
+    head.rotation.z = -Math.PI / 2; head.position.x = hLen / 2;
+    g.add(head);
     const pl = new THREE.Mesh(plumeGeo, plumeMaterial());
     pl.rotation.z = -Math.PI / 2;                   // plume -Y -> body -X (aft)
-    pl.position.x = -1.6;
+    pl.position.x = -BELL_LEN + 0.1;
     pl.frustumCulled = false;
     pl.visible = false;
     g.add(pl);
@@ -534,65 +599,23 @@ function plumeMaterial() {
   }
 }
 const engineLight = new THREE.PointLight(0xffa860, 0, 0, 2);
-engineLight.position.set(AFT_X - 12, 0, 0);
+engineLight.position.set(X0 - 12, 0, 0);
 booster.add(engineLight);
 
 // ---------------------------------------------------------------------------
 // tower, chopsticks, launch mount, tank farm
 
-const towerMat = new THREE.MeshStandardMaterial({ color: 0x6d6f73, metalness: 0.55, roughness: 0.6 });
+const towerMat = new THREE.MeshStandardMaterial({ color: 0xaeb1b4, metalness: 0.55, roughness: 0.5 });
 const darkMat = new THREE.MeshStandardMaterial({ color: 0x3a3b3e, metalness: 0.6, roughness: 0.55 });
-const concreteMat = new THREE.MeshStandardMaterial({ color: 0x9b9893, metalness: 0.0, roughness: 0.9 });
+const concreteMat = new THREE.MeshStandardMaterial({ color: 0xa4a19b, metalness: 0.0, roughness: 0.92 });
+const steelDark = new THREE.MeshStandardMaterial({ color: 0x2f3134, metalness: 0.65, roughness: 0.5 });
 const TW = 12.0, TH = 146.0;
 const towerRig = new THREE.Group();
 towerRig.position.set(TARGET.x, 0, TARGET.z);
 towerRig.rotation.y = TOWER_ROT;
 scene.add(towerRig);
-{
-  const members = [];
-  const hs = TW / 2;
-  const corners = [[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]];
-  const push = (a, b, t) => members.push([a, b, t]);
-  for (const [x, z] of corners) push(new THREE.Vector3(x, 0, z), new THREE.Vector3(x, TH, z), 1.3);
-  const bays = 16;
-  for (let i = 0; i <= bays; i++) {
-    const y = TH * i / bays;
-    for (let c = 0; c < 4; c++) {
-      const [x0, z0] = corners[c], [x1, z1] = corners[(c + 1) % 4];
-      push(new THREE.Vector3(x0, y, z0), new THREE.Vector3(x1, y, z1), 0.55);
-      if (i < bays) {
-        const y1 = TH * (i + 1) / bays;
-        push(new THREE.Vector3(x0, y, z0), new THREE.Vector3(x1, y1, z1), 0.35);
-        push(new THREE.Vector3(x1, y, z1), new THREE.Vector3(x0, y1, z0), 0.35);
-      }
-    }
-  }
-  push(new THREE.Vector3(0, TH, 0), new THREE.Vector3(0, TH + 14, 0), 0.4);
-  const geo = new THREE.BoxGeometry(1, 1, 1);
-  const inst = new THREE.InstancedMesh(geo, towerMat, members.length);
-  const m4 = new THREE.Matrix4(), qn = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-  members.forEach(([a, b, t], k) => {
-    const d = b.clone().sub(a), len = d.length();
-    qn.setFromUnitVectors(up, d.clone().normalize());
-    m4.compose(a.clone().add(b).multiplyScalar(0.5), qn, new THREE.Vector3(t, len, t));
-    inst.setMatrixAt(k, m4);
-  });
-  inst.castShadow = true; inst.receiveShadow = true;
-  inst.position.set(TOWER_X, 0, 0);
-  towerRig.add(inst);
-  // tower base block and top deck
-  const base = new THREE.Mesh(new THREE.BoxGeometry(18, 8, 18), concreteMat);
-  base.position.set(TOWER_X, 4, 0); base.receiveShadow = true; base.castShadow = true; towerRig.add(base);
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(TW + 3, 2, TW + 3), darkMat);
-  deck.position.set(TOWER_X, TH, 0); deck.castShadow = true; towerRig.add(deck);
-}
-
-// chopsticks: a carriage wrapped round three faces of the tower, hoisted by
-// cables from the drawworks on top, and two box-truss arms hinged at the
-// face corners with catch rails and shock-absorbing carts under the fins.
-const FACE_X = TOWER_X + TW / 2;
-const steelDark = new THREE.MeshStandardMaterial({ color: 0x2f3134, metalness: 0.65, roughness: 0.5 });
 const _up = new THREE.Vector3(0, 1, 0);
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 function strut(parent, a, b, t, mat, h = t) {
   const d = b.clone().sub(a), len = d.length();
   const m = new THREE.Mesh(new THREE.BoxGeometry(t, len, h), mat);
@@ -602,89 +625,186 @@ function strut(parent, a, b, t, mat, h = t) {
   parent.add(m);
   return m;
 }
-const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+// Instanced members (box beams between two points) for the big lattice.
+function instancedBeams(members, mat) {
+  const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, members.length);
+  const m4 = new THREE.Matrix4(), qn = new THREE.Quaternion();
+  members.forEach(([a, b, t], k) => {
+    const d = b.clone().sub(a), len = d.length();
+    qn.setFromUnitVectors(_up, d.clone().normalize());
+    m4.compose(a.clone().add(b).multiplyScalar(0.5), qn, new THREE.Vector3(t, len, t));
+    inst.setMatrixAt(k, m4);
+  });
+  inst.castShadow = true; inst.receiveShadow = true;
+  return inst;
+}
+function panelTexture() {                          // cladding: steel plates with seams
+  const c = document.createElement('canvas'); c.width = 512; c.height = 1024;
+  const g = c.getContext('2d');
+  g.fillStyle = '#a6a9ab'; g.fillRect(0, 0, 512, 1024);
+  for (let k = 0; k < 2000; k++) {
+    g.fillStyle = `rgba(${Math.random() < 0.5 ? '255,255,255' : '40,36,32'},${0.02 + 0.03 * Math.random()})`;
+    g.fillRect(Math.random() * 512, Math.random() * 1024, 2 + 30 * Math.random(), 1 + 3 * Math.random());
+  }
+  g.fillStyle = 'rgba(50,50,52,0.55)';
+  for (let y = 0; y <= 1024; y += 128) g.fillRect(0, y, 512, 3);
+  for (let x = 0; x <= 512; x += 170) g.fillRect(x, 0, 3, 1024);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+// Tower (built facing +X in the rig; see TOWER_ROT): a truncated concrete
+// pyramid base, a square lattice of heavy corner columns with an X-braced
+// face per bay and plan bracing inside, steel cladding over the lower
+// section, and an open frame box on top housing the drawworks.
+const BASE_H = 18.0, CLAD_TOP = 58.0, TOP_FRAME = 11.0;
+{
+  const hs = TW / 2;
+  const corners = [[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]];
+  const heavy = [], light = [];
+  for (const [x, z] of corners) heavy.push([V3(x, 0, z), V3(x, TH, z), 1.7]);
+  const bays = 18;
+  for (let i = 0; i <= bays; i++) {
+    const y = TH * i / bays;
+    for (let c = 0; c < 4; c++) {
+      const [x0, z0] = corners[c], [x1, z1] = corners[(c + 1) % 4];
+      heavy.push([V3(x0, y, z0), V3(x1, y, z1), 0.9]);                 // ring girder
+      if (i < bays && y >= CLAD_TOP - 1) {                              // open faces: X bracing
+        const y1 = TH * (i + 1) / bays;
+        light.push([V3(x0, y, z0), V3(x1, y1, z1), 0.55]);
+        light.push([V3(x1, y, z1), V3(x0, y1, z0), 0.55]);
+      }
+    }
+    // plan bracing inside (visible through the open faces)
+    light.push([V3(-hs, y, -hs), V3(hs, y, hs), 0.4]);
+    light.push([V3(hs, y, -hs), V3(-hs, y, hs), 0.4]);
+    // inner K-bracing panels on two faces, as on the real lattice
+    if (i < bays && y >= CLAD_TOP - 1) {
+      const y1 = TH * (i + 1) / bays, ym = 0.5 * (y + y1);
+      for (const zz of [-hs + 0.9, hs - 0.9]) {
+        light.push([V3(-hs, ym, zz), V3(0, y, zz), 0.32]);
+        light.push([V3(-hs, ym, zz), V3(0, y1, zz), 0.32]);
+      }
+    }
+  }
+  heavy.push([V3(0, TH + TOP_FRAME, 0), V3(0, TH + TOP_FRAME + 12, 0), 0.4]);   // mast
+  towerRig.add(instancedBeams(heavy.map(([a, b, t]) => [a.add(V3(TOWER_X, 0, 0)), b.add(V3(TOWER_X, 0, 0)), t]), towerMat));
+  towerRig.add(instancedBeams(light.map(([a, b, t]) => [a.add(V3(TOWER_X, 0, 0)), b.add(V3(TOWER_X, 0, 0)), t]), towerMat));
+  // cladding over the lower section (four faces, just inside the columns)
+  const tex = panelTexture();
+  const cladMat = new THREE.MeshStandardMaterial({ map: tex, metalness: 0.45, roughness: 0.6 });
+  tex.repeat.set(2, (CLAD_TOP - BASE_H) / 16);
+  for (let f = 0; f < 4; f++) {
+    const pl = new THREE.Mesh(new THREE.PlaneGeometry(TW - 0.4, CLAD_TOP - BASE_H), cladMat);
+    const a = f * Math.PI / 2;
+    pl.position.set(TOWER_X + Math.cos(a) * (hs - 0.15), (BASE_H + CLAD_TOP) / 2, -Math.sin(a) * (hs - 0.15));
+    pl.rotation.y = a + Math.PI / 2;
+    pl.castShadow = true; pl.receiveShadow = true;
+    towerRig.add(pl);
+  }
+  // truncated pyramid base (square frustum), with a darker plinth band
+  const pyr = new THREE.Mesh(new THREE.CylinderGeometry(9.5 * Math.SQRT2, 18 * Math.SQRT2, BASE_H, 4, 1), concreteMat);
+  pyr.rotation.y = Math.PI / 4; pyr.position.set(TOWER_X, BASE_H / 2, 0);
+  pyr.castShadow = true; pyr.receiveShadow = true; towerRig.add(pyr);
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(TW + 4, 3, TW + 4), darkMat);
+  plinth.position.set(TOWER_X, BASE_H + 1.5, 0); plinth.castShadow = true; towerRig.add(plinth);
+  // open frame box on top, wider than the tower, with the drawworks inside
+  const top = new THREE.Group();
+  const th = hs + 1.6, y0 = TH, y1 = TH + TOP_FRAME;
+  const tc = [[-th, -th], [th, -th], [th, th], [-th, th]];
+  const frame = [];
+  for (const [x, z] of tc) frame.push([V3(x, y0, z), V3(x, y1, z), 0.8]);
+  for (const yy of [y0, y0 + TOP_FRAME / 2, y1]) for (let c = 0; c < 4; c++) {
+    const [x0, z0] = tc[c], [x1, z1] = tc[(c + 1) % 4];
+    frame.push([V3(x0, yy, z0), V3(x1, yy, z1), 0.6]);
+    if (yy < y1) frame.push([V3(x0, yy, z0), V3(x1, yy + TOP_FRAME / 2, z1), 0.35]);
+  }
+  top.add(instancedBeams(frame.map(([a, b, t]) => [a.add(V3(TOWER_X, 0, 0)), b.add(V3(TOWER_X, 0, 0)), t]), towerMat));
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(2 * th, 0.8, 2 * th), darkMat);
+  deck.position.set(TOWER_X, y0, 0); top.add(deck);
+  const house = new THREE.Mesh(new THREE.BoxGeometry(TW - 3, 5.5, TW - 2), darkMat);
+  house.position.set(TOWER_X - 0.5, y0 + 3.2, 0); top.add(house);
+  for (const zc of [-2.15, 2.15]) {
+    const sheave = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.6, 32), steelDark);
+    sheave.rotation.x = Math.PI / 2; sheave.position.set(TOWER_X + hs - 1.5, y0 + 2.2, zc); top.add(sheave);
+  }
+  top.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  towerRig.add(top);
+}
+
+// chopsticks: a framed carriage wrapped round three faces of the tower,
+// hoisted by cables from the drawworks, and two deep box-truss arms hinged at
+// the face corners: level top chord carrying the catch rail and the
+// shock-absorbing carts, the bottom chord rising from a deep root to a
+// shallow tip that ends in a downturned hook.
+const FACE_X = TOWER_X + TW / 2;
 const carriage = new THREE.Group();
 {
-  const ch = 10.0, wrap = TW / 2 + 1.4;
-  // front plate across the arm face, side plates wrapping round the tower
-  const front = new THREE.Mesh(new THREE.BoxGeometry(1.6, ch, TW + 3.0), darkMat);
-  front.position.set(FACE_X + 1.0, 0, 0); carriage.add(front);
+  const ch = 14.0, wrap = TW / 2 + 1.4;
+  const front = new THREE.Mesh(new THREE.BoxGeometry(1.4, ch, TW + 3.0), darkMat);
+  front.position.set(FACE_X + 1.0, -ch / 2 + 2.5, 0); carriage.add(front);
   for (const sd of [1, -1]) {
-    const side = new THREE.Mesh(new THREE.BoxGeometry(TW + 1.0, ch * 0.8, 1.2), darkMat);
-    side.position.set(TOWER_X + 0.5, -0.6, sd * wrap); carriage.add(side);
-    // guide rollers on the tower legs
-    for (const yy of [-ch / 2 + 1, ch / 2 - 1]) {
+    const side = new THREE.Mesh(new THREE.BoxGeometry(TW + 1.0, ch * 0.7, 1.0), darkMat);
+    side.position.set(TOWER_X + 0.5, -ch / 2 + 2.5, sd * wrap); carriage.add(side);
+    for (const yy of [-ch + 4, 1.0]) {
       const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 16), steelDark);
       roller.rotation.x = Math.PI / 2; roller.position.set(FACE_X - 0.4, yy, sd * (TW / 2 + 0.2));
       carriage.add(roller);
     }
   }
   carriage.children.forEach((c) => { c.castShadow = true; c.receiveShadow = true; });
-  carriage.position.set(0, ARM_Y + 1.5, 0);
+  carriage.position.set(0, ARM_Y, 0);
   towerRig.add(carriage);
-  // hoist cables: carriage top to the drawworks sheaves
   const cableMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.4, roughness: 0.6 });
   for (const zc of [-3.2, -1.1, 1.1, 3.2]) {
-    strut(towerRig, V3(FACE_X - 1.5, ARM_Y + 1.5 + ch / 2, zc), V3(FACE_X - 1.5, TH + 3.0, zc), 0.12, cableMat);
+    strut(towerRig, V3(FACE_X - 1.5, ARM_Y + 2.5, zc), V3(FACE_X - 1.5, TH + 2.2, zc), 0.12, cableMat);
   }
-}
-// drawworks on the tower top: a frame, the winch house and the sheaves
-{
-  const top = new THREE.Group();
-  const house = new THREE.Mesh(new THREE.BoxGeometry(TW - 2, 6.5, TW - 1), darkMat);
-  house.position.set(TOWER_X - 0.5, TH + 4.3, 0); top.add(house);
-  for (const zc of [-2.15, 2.15]) {
-    const sheave = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 0.6, 32), steelDark);
-    sheave.rotation.x = Math.PI / 2; sheave.position.set(FACE_X - 1.5, TH + 3.0, zc); top.add(sheave);
-  }
-  const boom = strut(top, V3(TOWER_X - 3, TH + 7.5, 0), V3(FACE_X + 2.5, TH + 9.5, 0), 0.9, towerMat, 1.2);
-  boom.castShadow = true;
-  top.children.forEach((c) => { c.castShadow = true; });
-  towerRig.add(top);
 }
 const arms = [];
 for (const side of [+1, -1]) {
   const hinge = new THREE.Group();
   hinge.position.set(FACE_X + 2.5, ARM_Y, side * 5.9);
-  const armLen = 33.0, hh = 1.9, hw = 0.95;
+  const armLen = 33.0, hw = 0.95, dRoot = 9.0, dTip = 2.4;
   const arm = new THREE.Group();
-  // box truss: four chords, verticals and diagonals on every face, tapered
-  // toward the tip so it reads as the real tapered chopstick
-  const taper = (x) => 1.0 - 0.35 * x / armLen;
-  const P = (x, sy, sz) => V3(x, sy * hh * taper(x), sz * hw * taper(x));
-  const bays = 11;
-  for (const [sy, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) strut(arm, P(0, sy, sz), P(armLen, sy, sz), 0.42, towerMat);
-  for (let k = 0; k <= bays; k++) {
-    const x0 = armLen * k / bays, x1 = armLen * (k + 1) / bays;
-    for (const sz of [1, -1]) strut(arm, P(x0, 1, sz), P(x0, -1, sz), 0.26, towerMat);
-    for (const sy of [1, -1]) strut(arm, P(x0, sy, 1), P(x0, sy, -1), 0.22, towerMat);
-    if (k < bays) {
-      for (const sz of [1, -1]) strut(arm, P(x0, (k % 2 ? 1 : -1), sz), P(x1, (k % 2 ? -1 : 1), sz), 0.2, towerMat);
-      strut(arm, P(x0, 1, 1), P(x1, 1, -1), 0.16, steelDark);
+  const topY = 0.0;
+  const botY = (x) => -(dRoot + (dTip - dRoot) * x / armLen);
+  const P = (x, top, sz) => V3(x, top ? topY : botY(x), sz * hw);
+  const bays = 9;
+  for (const sz of [1, -1]) {
+    strut(arm, P(0, true, sz), P(armLen, true, sz), 0.6, towerMat);    // top chord
+    strut(arm, P(0, false, sz), P(armLen, false, sz), 0.55, towerMat); // bottom chord
+    for (let k = 0; k <= bays; k++) {
+      const x0 = armLen * k / bays;
+      strut(arm, P(x0, true, sz), P(x0, false, sz), 0.4, towerMat);     // verticals
+      if (k < bays) {
+        const x1 = armLen * (k + 1) / bays;
+        strut(arm, k % 2 ? P(x0, true, sz) : P(x0, false, sz), k % 2 ? P(x1, false, sz) : P(x1, true, sz), 0.32, towerMat);
+      }
     }
   }
-  // closed web over the root third, where the bending load is highest
-  const web = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.3, 2 * hh * 0.97, 0.12), steelDark);
-  web.position.set(armLen * 0.15, 0, -side * hw * 0.96); arm.add(web);
-  // catch rail along the inner top edge, and the shock-absorbing cart that
-  // the grid-fin hardpoint lands on
+  for (let k = 0; k <= bays; k++) {                                      // cross ties
+    const x0 = armLen * k / bays;
+    strut(arm, P(x0, true, 1), P(x0, true, -1), 0.3, towerMat);
+    strut(arm, P(x0, false, 1), P(x0, false, -1), 0.3, towerMat);
+  }
+  // downturned hook at the tip
+  strut(arm, P(armLen, true, 0), V3(armLen + 1.2, -dTip - 1.8, 0), 0.9, towerMat, 2 * hw);
+  // catch rail along the inner top edge and the shock-absorbing cart
   const rail = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.55, 0.5, 0.7), darkMat);
-  rail.position.set(armLen * 0.62, hh * taper(armLen * 0.62) + 0.25, -side * 0.45); arm.add(rail);
+  rail.position.set(armLen * 0.62, 0.55, -side * 0.45); arm.add(rail);
   const cart = new THREE.Group();
   const cartBody = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 1.5), new THREE.MeshStandardMaterial({ color: 0xc8a228, metalness: 0.3, roughness: 0.55 }));
   cartBody.position.y = 0.55; cart.add(cartBody);
   const pad = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 1.3), new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 }));
   pad.position.y = 1.2; cart.add(pad);
-  cart.position.set(armLen * 0.62, hh * taper(armLen * 0.62) + 0.5, -side * 0.45);
-  cart.children.forEach((c) => { c.castShadow = true; });
+  cart.position.set(armLen * 0.62, 0.8, -side * 0.45);
   arm.add(cart);
   // bumper on the inner face that the hull settles against
   const bumper = new THREE.Mesh(new THREE.BoxGeometry(armLen * 0.4, 1.2, 0.5), new THREE.MeshStandardMaterial({ color: 0x202020, roughness: 0.95 }));
-  bumper.position.set(armLen * 0.6, 0, -side * (hw * 0.8 + 0.25)); arm.add(bumper);
-  // hinge knuckle
-  const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 2 * hh + 1.2, 24), steelDark);
-  knuckle.castShadow = true; hinge.add(knuckle);
-  arm.children.forEach((c) => { c.castShadow = true; c.receiveShadow = true; });
+  bumper.position.set(armLen * 0.6, -1.2, -side * (hw + 0.25)); arm.add(bumper);
+  const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, dRoot + 1.5, 24), steelDark);
+  knuckle.position.y = -dRoot / 2 + 0.3; knuckle.castShadow = true; hinge.add(knuckle);
+  arm.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   hinge.add(arm);
   towerRig.add(hinge);
   arms.push({ hinge, side });
@@ -1104,8 +1224,8 @@ function drawAt(simT, rate, videoT, holdT) {
     controls.target.copy(st.p); controls.update();
   } else if (params.has('closeup')) {
     // debug: look at the top of the booster from a chosen azimuth/elevation
-    const [az, el, d] = params.get('closeup').split(',').map(Number);
-    const top = new THREE.Vector3(FIN_X, 0, 0).applyQuaternion(st.q).add(st.p);
+    const [az, el, d, bx] = params.get('closeup').split(',').map(Number);   // bx: body station to look at
+    const top = new THREE.Vector3(Number.isFinite(bx) ? bx : FIN_X, 0, 0).applyQuaternion(st.q).add(st.p);
     camera.position.set(top.x + d * Math.cos(el) * Math.cos(az), top.y + d * Math.sin(el),
                         top.z + d * Math.cos(el) * Math.sin(az));
     camera.up.set(0, 1, 0); camera.lookAt(top); camera.fov = 30; camera.updateProjectionMatrix();

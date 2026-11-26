@@ -209,7 +209,7 @@ def build_viewer(mission_json: str, out_html: str,
     js = open(os.path.join(viz_dir, "scene.js")).read()
     data = open(mission_json).read()
     import base64
-    fin = base64.b64encode(open(os.path.join(viz_dir, "assets", "gridfin.i16"),
+    fin = base64.b64encode(open(os.path.join(viz_dir, "assets", "gridfin_v3.i16"),
                                 "rb").read()).decode()
     cdn = f"https://cdn.jsdelivr.net/npm/three@{three_version}"
     html = html.replace('"./node_modules/three/build/three.module.js"',

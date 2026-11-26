@@ -169,16 +169,25 @@ in headless Chromium, frame by frame, then encodes the frames with ffmpeg:
   with a procedural Gulf coastline, cumulus field and sun glint, and
   aerial-perspective haze integrated through an exponential atmosphere. The
   sky darkens to space with altitude.
-- **Booster:** stainless steel with PBR reflections, weld seams, soot on the
-  lower half, the forward dome inside the open strut crown, and the side
-  raceway. It has three grid fins from the supplied STEP model (the middle
-  fin with the pair 180° apart at ±90° from it, the pair resting on the
-  chopsticks at the catch) and 33 bells in the webcast layout. Plumes expand into translucent vacuum
+- **Booster:** body stations from the CFD model (rocketcfd
+  `vehicles/super_heavy.py`, photo-measured V3 dimensions). Bright stainless
+  with weld seams. Four bevelled chines on the lower hull: a tall pair either
+  side of the raceway and a short pair either side of the rudder fin. Also the
+  raceway, a clamped conduit, the vent band, the black engine section with its
+  panel row, and 33 Raptor 3 bells with powerheads, the outer ring overhanging
+  the hull. The forward dome sits inside the open hot-staging truss. Three
+  grid fins (`viz3d/tools/gridfin_mesh.py`) are generated from the CFD fin
+  parameters: 3.5 m wide, 4.2 m reach, 0.5 m deep, diamond lattice, teeth on
+  the engine-side face. The middle fin has the pair 180° apart at ±90° from
+  it, and the pair rests on the chopsticks at the catch. Plumes expand into translucent vacuum
   plumes at altitude and tighten to shock-diamond plumes near the ground.
   The engines lit follow the simulation (5 → 33 → 13 → 3 → 13 → 5 → 3).
-- **Tower:** lattice tower with truss chopsticks (catch rails, shock-absorbing
-  carts, bumpers) on a carriage that wraps the tower and hangs from the
-  drawworks cables. The chopsticks close as the booster
+- **Tower:** modelled on photos of Tower 2. A truncated concrete pyramid
+  base, steel cladding over the lower section, a heavy light-grey lattice
+  with plan bracing, and an open frame box on top housing the drawworks. The
+  chopsticks are deep trapezoidal box trusses with catch rails,
+  shock-absorbing carts, bumpers and a hooked tip. They hang from a carriage
+  that wraps the tower on drawworks cables, and close as the booster
   arrives, launch mount and tank farm. Tower 2 by default: the rig is
   rotated to its real heading, with the arms opening south-southwest and
   the tower north of the catch point. `--tower 1` gives the ocean-facing
