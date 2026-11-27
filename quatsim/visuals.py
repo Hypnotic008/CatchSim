@@ -540,9 +540,9 @@ def monte_carlo_report(results: list[dict], path: str = "figs/monte_carlo.png",
     fig.text(0.055, 0.945, "Monte Carlo dispersion campaign", fontsize=17,
              weight="bold")
     fig.text(0.055, 0.905,
-             "dispersed separation state, propellant, dry mass, thrust, Isp, "
-             "drag, density, winds and body rates — guidance flies on the "
-             "nominal models", fontsize=10.5, color=INK2)
+             "dispersed separation, propellant, mass, thrust, Isp, drag, density, "
+             "winds, body rates, engine failures — guidance on nominal models",
+             fontsize=10.5, color=INK2)
     fig.text(0.985, 0.94, f"{k}/{n} caught", ha="right", fontsize=22,
              weight="bold", color=GOOD if k == n else WARNING)
     fig.text(0.985, 0.905, f"{100 * k / n:.1f}%  ·  95% lower bound "
@@ -658,13 +658,21 @@ def monte_carlo_report(results: list[dict], path: str = "figs/monte_carlo.png",
         "engine thrust": "k_thrust", "Isp": "k_isp", "drag coeff.": "k_cd",
         "air density": "k_rho", "surface wind": "wind_surface",
         "jet-stream wind": "wind_jet",
+        "engines failing to relight": "relight_fail", "engine shutdown in burn": "shutdown",
     }
     # worst margin across criteria (max value/limit) per case
     W = np.nanmax(np.column_stack([arr(k_) / LIMITS[k_][0] for k_ in keys]),
                   axis=1)
     corr = {}
     for lab, key in inputs.items():
-        x = arr(key)
+        if key == "shutdown":                       # an in-flight shutdown happened (0 / 1)
+            if not all("shutdown_t" in r for r in rows):
+                continue
+            x = (arr("shutdown_t") >= 0.0).astype(float)
+        elif not all(key in r for r in rows):
+            continue
+        else:
+            x = arr(key)
         if np.nanstd(x) == 0:
             continue
         rx = np.argsort(np.argsort(x)); ry = np.argsort(np.argsort(W))
