@@ -98,6 +98,13 @@ class DispersionSpec:
     # Day-of-launch wind forecast error (balloon sounding -> guidance).
     wind_forecast_scale: float = 0.30   # fraction of magnitude
     wind_forecast_dir: float = 15.0     # deg
+    # Landing-burn engine failures. Per-engine probability that one of the 13 fails to
+    # relight, and probability that one lit engine shuts down during the burn (at a time
+    # uniform over the first `shutdown_window` s after ignition). Engineering estimates:
+    # Super Heavy has flown landing burns with engines out.
+    relight_fail_prob: float = 0.02
+    shutdown_prob: float = 0.05
+    shutdown_window: float = 30.0       # s
 
 
 def _tn(rng, three_sigma):
@@ -130,6 +137,9 @@ def sample_case(rng: np.random.Generator, spec: DispersionSpec) -> dict:
         "wind_jet_alt": float(rng.uniform(9_000.0, 14_000.0)),
         "wind_fc_scale": 1.0 + _tn(rng, spec.wind_forecast_scale),
         "wind_fc_dir": _tn(rng, spec.wind_forecast_dir),
+        "relight_fail": int(rng.binomial(13, spec.relight_fail_prob)),
+        "shutdown_t": (float(rng.uniform(0.0, spec.shutdown_window))
+                       if rng.random() < spec.shutdown_prob else -1.0),
     }
 
 
@@ -140,7 +150,8 @@ def nominal_case() -> dict:
             "k_thrust": 1.0, "k_isp": 1.0, "k_cd": 1.0, "k_rho": 1.0,
             "wind_surface": 0.0, "wind_jet": 0.0, "wind_dir": 0.0,
             "wind_veer": 0.0, "wind_jet_alt": 11_000.0,
-            "wind_fc_scale": 1.0, "wind_fc_dir": 0.0}
+            "wind_fc_scale": 1.0, "wind_fc_dir": 0.0,
+            "relight_fail": 0, "shutdown_t": -1.0}
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +192,8 @@ def run_case(case: dict, dt: float = 0.02, keep_trajectory: bool = False,
     truth_v.thrust_per_engine *= case["k_thrust"]
     truth_v.isp_sl *= case["k_isp"]
     truth_v.isp_vac *= case["k_isp"]
+    truth_v.landing_relight_failures = int(case.get("relight_fail", 0))
+    truth_v.landing_shutdown_t = float(case.get("shutdown_t", -1.0))
     wind = WindProfile(surface_speed=case["wind_surface"],
                        jet_speed=case["wind_jet"],
                        jet_altitude=case["wind_jet_alt"],

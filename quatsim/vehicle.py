@@ -152,6 +152,12 @@ class Vehicle:
     gimbal_limit: float = np.radians(15.0)
 
     n_engines_total: int = 33
+    # Engine failures on the landing burn (truth plant; the Monte Carlo samples them):
+    # engines of the 13 that fail to relight at ignition, and the time after ignition [s]
+    # at which one lit engine shuts down (< 0: none). The flight computer sees which
+    # engines lit (chamber pressure), so the landing guidance plans on what is left.
+    landing_relight_failures: int = 0
+    landing_shutdown_t: float = -1.0
     n_gimballing_max: int = 13         # inner ring; verify for V3
 
     # Distance from CoM to the gimbal plane. Moves as propellant drains;

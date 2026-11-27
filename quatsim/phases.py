@@ -348,6 +348,9 @@ class FlightSequencer:
         self._t_now = 0.0
         self._landing_n_lit = 0
         self._terminal_dispersion_applied = False
+        self._eng_cap = None              # landing engines still available (truth)
+        self._eng_shutdown_done = False
+        self._eng_events = []
 
         for seg in segments:
             t_seg = 0.0
@@ -558,6 +561,8 @@ class FlightSequencer:
                          if segments[-1].mode == Mode.LANDING
                          and self._landing_n_lit
                          else segments[-1].n_lit)
+        log.events.extend(self._eng_events)
+        log.events.sort(key=lambda e: e[0])
         log.events.append((t, "sequence complete"))
         return self._finish(log.arrays())
 
@@ -741,6 +746,28 @@ class FlightSequencer:
         v.isp_vac = self.gnc_vehicle.isp_vac * kt / km
         return v
 
+    def _landing_engines(self, lg, n_cmd):
+        """Engines that actually fire on the landing burn (truth): the commanded count, less
+        the engines that failed to relight and, after `landing_shutdown_t`, one that shut down
+        in flight (an engine already off stays off). The guidance is told how many are left
+        (engine telemetry), so it plans the 13 / 5 / 3 stages on real authority."""
+        veh = self.vehicle
+        if self._eng_cap is None:
+            k = int(getattr(veh, "landing_relight_failures", 0))
+            self._eng_cap = max(lg.cfg.n_brake - k, 0)
+            if k:
+                self._eng_events.append((self._t_now, f"landing burn: {k} engine(s) failed to relight"))
+        n = min(int(n_cmd), self._eng_cap)
+        ts = float(getattr(veh, "landing_shutdown_t", -1.0))
+        if (ts >= 0.0 and not self._eng_shutdown_done and n > 0 and np.isfinite(lg.ignition_t)
+                and self._t_now - lg.ignition_t >= ts):
+            self._eng_cap = n - 1
+            self._eng_shutdown_done = True
+            self._eng_events.append((self._t_now, f"landing burn: engine shutdown with {n} lit"))
+            n = min(int(n_cmd), self._eng_cap)
+        lg.n_healthy = self._eng_cap
+        return n
+
     def _relax_fins(self):
         """Outside the aerodynamic control law (engines lit) the grid fins
         return to neutral at their rate limit."""
@@ -817,7 +844,8 @@ class FlightSequencer:
                                            phase=cmd.phase,
                                            throttle=cmd.throttle,
                                            n_lit=cmd.n_lit))
-            n_lit = cmd.n_lit
+            n_lit = self._landing_engines(lg, cmd.n_lit)
+            self._landing_n_lit = n_lit
             throttle = cmd.throttle
             thrust = veh.axial_thrust(n_lit, throttle)       # TRUTH engines
             n_gim = min(seg.n_gimballing, n_lit)

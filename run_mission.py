@@ -145,6 +145,11 @@ def apply_flight(n: int):
     prof = FLIGHTS[int(n)]
     SEPARATION.update(prof["separation"])
     AIM_X_1200 = prof["aim_x"]
+    # the profile's aerodynamic table too, unless one was chosen explicitly: a Monte Carlo
+    # worker started with only CATCHSIM_FLIGHT set otherwise flew the placeholder aero
+    if prof.get("aero") and not os.environ.get("CATCHSIM_AERO_CFD"):
+        here = os.path.dirname(os.path.abspath(__file__))
+        os.environ["CATCHSIM_AERO_CFD"] = os.path.join(here, prof["aero"])
 
 
 if os.environ.get("CATCHSIM_FLIGHT"):

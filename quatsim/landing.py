@@ -265,6 +265,10 @@ class LandingGuidance:
     def reset(self):
         self.phase = COAST
         self.n_lit = 0
+        # engines available on the landing burn, from engine telemetry once the burn has
+        # started (None: all of them). The 5- and 3-engine stages use any healthy engine of
+        # the 13 (the inner ring gimbals too), so only the count matters.
+        self.n_healthy = None
         self.ignition_alt = float("nan")
         self.ignition_speed = float("nan")
         self.ignition_t = float("nan")
@@ -310,8 +314,15 @@ class LandingGuidance:
                       / c.tilt_envelope_rate
                       + (tau - s1) * np.tan(c.max_tilt_terminal))
 
+    def _avail(self, n: int) -> int:
+        return n if self.n_healthy is None else max(min(n, self.n_healthy), 0)
+
+    def _thrust(self, n: int) -> float:
+        """Full-throttle thrust of n commanded engines, counting only those available."""
+        return self.vehicle.axial_thrust(self._avail(n), 1.0)
+
     def _a_max_vertical(self, n: int, m: float, drag_up: float) -> float:
-        return self.vehicle.axial_thrust(n, 1.0) / m - ENV.G0 + drag_up / m
+        return self._thrust(n) / m - ENV.G0 + drag_up / m
 
     # ------------------------------------------------------------------
 
@@ -359,8 +370,7 @@ class LandingGuidance:
             slow = vz > -c.handover_speed_factor * c.v_gate
             low = h <= c.gate_altitude
             a_stop = vz * vz / (2.0 * max(h_left, 1.0)) + ENV.G0
-            capable = (self.vehicle.axial_thrust(c.n_terminal, 1.0) / m
-                       * 0.85 >= a_stop)
+            capable = (self._thrust(c.n_terminal) / m * 0.85 >= a_stop)
             if (slow or low) and capable:
                 self.phase = TERMINAL
                 self.n_lit = c.n_terminal
@@ -384,15 +394,13 @@ class LandingGuidance:
                 # thrust alone, no credit for drag: at a fast, high ignition the drag is
                 # large but falls away as the booster slows, and 5 engines must finish the
                 # brake without it
-                a5 = (c.mid_frac * self.vehicle.axial_thrust(c.n_mid, 1.0) / m
-                      - ENV.G0)
+                a5 = c.mid_frac * self._thrust(c.n_mid) / m - ENV.G0
                 if a_z <= a5:
                     self.n_lit = c.n_mid
                     self.mid_alt = h
                     self.mid_t = t
                 else:
-                    a_hard = (c.hard13_frac
-                              * self.vehicle.axial_thrust(c.n_brake, 1.0) / m
+                    a_hard = (c.hard13_frac * self._thrust(c.n_brake) / m
                               - ENV.G0 + float(drag[2]) / m)
                     a_z = max(a_z, a_hard)
             t_go = 2.0 * dh / max(abs(vz) + c.v_gate, 1.0)
@@ -518,7 +526,7 @@ class LandingGuidance:
 
         # Throttle: vertical first. If the full vector exceeds what the
         # engines can give, shed horizontal demand rather than vertical.
-        f_avail = self.vehicle.axial_thrust(self.n_lit, 1.0) / m
+        f_avail = max(self._thrust(self.n_lit), 1.0) / m
         fn = float(np.linalg.norm(f))
         if fn > f_avail:
             fz = min(float(f[2]), f_avail)
