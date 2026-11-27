@@ -278,6 +278,10 @@ The flight computer sees which engines lit (chamber pressure), so the landing gu
 healthy engine of the 13, since the inner ring gimbals too. The Monte Carlo samples both
 failures: 2 % per engine for relight failure, and a 5 % chance of a shutdown in the first 30 s.
 
+`figs/catch3d_engine_out.mp4` shows an engine-out catch on the Flight 15 profile: one of the
+final three engines shuts down 15 s into the burn, the booster finishes on two engines, holds a
+hover above the catch point and is caught at 0.98 m, with 28 t of propellant left.
+
 ```bash
 python run_mission.py --flight 15 --relight-fail 3            # 10 of 13 relight
 python run_mission.py --flight 15 --engine-shutdown 15        # one of the final 3 quits
