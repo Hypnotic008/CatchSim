@@ -163,6 +163,11 @@ def export_mission(out: dict, target, report: dict | None, path: str,
             events.append({"t": float(tt), "name": "13 → 3"})
         elif name == "begin reorient":
             events.append({"t": float(tt), "name": "BOOSTBACK SHUTDOWN"})
+        elif "engine shutdown" in name:
+            events.append({"t": float(tt), "name": "ENGINE OUT"})
+        elif "failed to relight" in name:
+            k = name.split(":")[1].strip().split()[0]
+            events.append({"t": float(tt), "name": f"{k} NO RELIGHT"})
     ka = int(np.argmax(r[:, 2]))
     events.append({"t": float(t[ka]), "name": "APOGEE"})
     if le and np.isfinite(le.get("ignition_t", np.nan)):
@@ -173,6 +178,8 @@ def export_mission(out: dict, target, report: dict | None, path: str,
         events.append({"t": float(le["handover_t"]),
                        "name": "5 → 3" if np.isfinite(le.get("mid_t", np.nan))
                        else "13 → 3"})
+    if le and np.isfinite(le.get("final_hold_t", np.nan)):
+        events.append({"t": float(le["final_hold_t"]), "name": "HOLD"})
     events.append({"t": float(t[-1]), "name": "CATCH"})
     events.sort(key=lambda e: e["t"])
 

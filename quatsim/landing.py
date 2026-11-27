@@ -298,6 +298,7 @@ class LandingGuidance:
         self.hold_time = 0.0               # s spent slowed by the corridor hold
         self.final_hold_time = 0.0         # s spent in the final hold
         self._final_holding = False
+        self.final_hold_t = float("nan")   # when the final hold first engaged
         self._q_prev = None
         self._rate_est = 0.0               # body rate estimated from the attitude [rad/s]
         self._t_prev = None
@@ -501,6 +502,8 @@ class LandingGuidance:
                     v_cap = v_ref * float(np.clip(gap_f / c.final_hold_band, 0.0, 1.0))
                     if v_cap < v_ref:
                         v_ref, in_flare = v_cap, False
+                        if not np.isfinite(self.final_hold_t):
+                            self.final_hold_t = t
                         if self._t_prev is not None:
                             dt_h = t - self._t_prev
                             self.final_hold_time += dt_h
