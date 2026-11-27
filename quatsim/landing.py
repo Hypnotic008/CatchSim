@@ -203,15 +203,22 @@ class LandingConfig:
     # Final hold: if the booster is still more than `final_hold_tol` off the catch point
     # (or sliding sideways faster than `final_hold_vh`) within `final_hold_band` above it,
     # slow to a hover `final_hold_height` above the catch point until it is lined up and
-    # nearly stopped: within half the tolerance and under the speed limit (hysteresis), at
-    # most `final_hold_max` s (~0.9 t of propellant per second). Losing one of the three
-    # engines late in the approach cuts the attitude authority by a third and the lateral
-    # loop overshot by 3 m with no time left to come back. 0 = off.
+    # nearly stopped: within half the tolerance and under the speed limit (hysteresis). It
+    # lasts up to `final_hold_max` s while more than `final_hold_reserve` of propellant is
+    # left (a hover burns ~0.9 t/s). Losing one of the three engines late in the approach cuts
+    # the attitude authority by a third and the lateral loop overshot by 3 m with no time left
+    # to come back. Not fixed by it: the same engine-out with a 12 m/s surface wind, where two
+    # engines cannot damp a 0.6 m/s lateral oscillation however long the hold (20 s tried).
+    # 0 = off.
     final_hold_tol: float = 1.0           # m
     final_hold_vh: float = 0.35           # m/s
     final_hold_band: float = 20.0         # m
     final_hold_height: float = 4.0        # m
     final_hold_max: float = 12.0          # s
+    final_hold_reserve: float = 5000.0    # kg of propellant kept back
+    # ...and while the body is still turning faster than this (the catch needs < 1 deg/s;
+    # a gusty case arrived lined up but rocking at 1.4 deg/s). Estimated from the attitude.
+    final_hold_rate: float = np.radians(0.6)  # rad/s
 
 
 @dataclass
@@ -291,6 +298,8 @@ class LandingGuidance:
         self.hold_time = 0.0               # s spent slowed by the corridor hold
         self.final_hold_time = 0.0         # s spent in the final hold
         self._final_holding = False
+        self._q_prev = None
+        self._rate_est = 0.0               # body rate estimated from the attitude [rad/s]
         self._t_prev = None
         self.roll_start = None
         self._d_hat = np.zeros(2)
@@ -348,6 +357,10 @@ class LandingGuidance:
         h = float(r[2])
         vz = float(v[2])
         m = self.vehicle.mass(prop)
+        if self._q_prev is not None and self._t_prev is not None and t > self._t_prev:
+            ang = Q.angle_between(self._q_prev, np.asarray(q, float))
+            self._rate_est += 0.3 * (ang / (t - self._t_prev) - self._rate_est)   # light low-pass
+        self._q_prev = np.asarray(q, float).copy()
         # Guidance's ESTIMATE of the aerodynamic force: axial drag plus the
         # body normal force at the current attitude (large during the brake,
         # when the vehicle leans up to 30 deg off a 300 m/s relative wind).
@@ -470,16 +483,20 @@ class LandingGuidance:
                     # envelope and crawl the booster across at a few m/s)
                     t_go_v = max(t_go_v, c.hold_tgo)
                     held = True
-            if c.final_hold_tol > 0.0 and not held and self.final_hold_time < c.final_hold_max:
+            if (c.final_hold_tol > 0.0 and not held and self.final_hold_time < c.final_hold_max
+                    and prop > c.final_hold_reserve):
                 gap_f = h_left - c.final_hold_height
                 e_now = float(np.linalg.norm(r[:2] - tgt[:2]))
                 vh_now = float(np.linalg.norm(v[:2]))
-                if self._final_holding:       # release only lined up AND nearly stopped
+                rate_now = self._rate_est
+                if self._final_holding:       # release only lined up, stopped AND steady
                     self._final_holding = (e_now > 0.5 * c.final_hold_tol
-                                           or vh_now > c.final_hold_vh)
+                                           or vh_now > c.final_hold_vh
+                                           or rate_now > c.final_hold_rate)
                 else:
                     self._final_holding = (e_now > c.final_hold_tol
-                                           or vh_now > 1.5 * c.final_hold_vh)
+                                           or vh_now > 1.5 * c.final_hold_vh
+                                           or rate_now > 1.5 * c.final_hold_rate)
                 if gap_f < c.final_hold_band and self._final_holding:
                     v_cap = v_ref * float(np.clip(gap_f / c.final_hold_band, 0.0, 1.0))
                     if v_cap < v_ref:

@@ -258,6 +258,60 @@ eased transitions and a 6 s hold on the caught booster.
   nominal flight that is 13 → 5 at ~1000 m and 5 → 3 at ~330 m.
   `LandingConfig(n_mid=0)` restores the old 13 → 3 burn.
 
+## Engine failures on the landing burn
+
+Super Heavy has flown landing burns with engines out. The truth vehicle now models two kinds
+of failure:
+- `landing_relight_failures`: engines of the 13 that fail to relight at ignition.
+- `landing_shutdown_t`: one lit engine shuts down that many seconds into the burn, and an engine
+  that is off stays off.
+
+The flight computer sees which engines lit (chamber pressure), so the landing guidance sizes the
+13 / 5 / 3 stages on the engines actually available. The 5- and 3-engine stages can use any
+healthy engine of the 13, since the inner ring gimbals too. The Monte Carlo samples both
+failures: 2 % per engine for relight failure, and a 5 % chance of a shutdown in the first 30 s.
+
+```bash
+python run_mission.py --flight 15 --relight-fail 3            # 10 of 13 relight
+python run_mission.py --flight 15 --engine-shutdown 15        # one of the final 3 quits
+python run_mission.py --flight 15 --engine-shutdown 15 --animate3d
+```
+
+On the Flight 15 profile:
+
+| Scenario | Result |
+|---|---|
+| 1-5 of 13 fail to relight | all caught; more propellant left (38.6-40.4 t vs 36.7), fewer engines burning |
+| one shutdown at 1, 5, 10 or 25 s | all caught |
+| one shutdown at 15 or 20 s (one of the final three) | caught only with the final hold below (it missed by 3.2 / 1.6 m before) |
+| 3 relight failures + shutdown at 15 s; 2 + shutdown at 20 s | caught |
+
+- **Final hold.** Losing one of the final three engines cuts the attitude authority by a third.
+  The lateral loop then overshot the catch point, with no time left to come back. Now, within
+  20 m above the catch point, the booster slows to a hover 4 m above it if it is any of:
+  - more than 1 m off,
+  - sliding sideways,
+  - still rotating.
+
+  It waits until it is lined up, stopped and steady (with hysteresis), for at most 12 s and
+  never below a 5 t propellant reserve.
+- **Known failure mode.** A shutdown in the final approach combined with the maximum 12 m/s
+  surface wind: two engines cannot damp a 0.6 m/s lateral oscillation, however long the hold.
+
+Monte Carlo on the Flight 15 profile, with engine failures sampled (40 dispersed cases plus the
+nominal): **40/41 caught, 10 of the 11 cases with an engine failure**.
+
+| | |
+|---|---|
+| The one miss | the case above: a shutdown 13.4 s into the burn and a 12 m/s surface wind |
+| Final hold used | 9 cases, at most 12 s |
+| Propellant left | median 36 t (minimum 8.8 t, in the miss) |
+| Ignition altitude | 1.7-2.7 km |
+| Hull-to-tower clearance | at least 2.7 m |
+
+The final hold also caught a no-failure case. It had arrived lined up in a gusty 10 m/s wind but
+still rocking at 1.4 deg/s; it held for 6 s until the rocking damped out.
+
 ## Working grid fins
 
 `GridFinSet` (`quatsim/aero.py`) models V3's three grid fins, each with its
