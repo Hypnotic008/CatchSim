@@ -288,7 +288,9 @@ On the Flight 15 profile:
 
 | Scenario | Result |
 |---|---|
-| 1-5 of 13 fail to relight | all caught; more propellant left (38.6-40.4 t vs 36.7), fewer engines burning |
+| 1-6 of 13 fail to relight | all caught; more propellant left (36-40 t vs 36.7), fewer engines burning |
+| 7 of 13 fail to relight | missed: the brake never gets down to 5 engines' authority, the 3-engine handover comes late (234 m) |
+| 8+ of 13 fail to relight | cannot stop: ignition is planned for 13 engines |
 | one shutdown at 1, 5, 10 or 25 s | all caught |
 | one shutdown at 15 or 20 s (one of the final three) | caught only with the final hold below (it missed by 3.2 / 1.6 m before) |
 | 3 relight failures + shutdown at 15 s; 2 + shutdown at 20 s | caught |
@@ -302,8 +304,13 @@ On the Flight 15 profile:
 
   It waits until it is lined up, stopped and steady (with hysteresis), for at most 12 s and
   never below a 5 t propellant reserve.
-- **Known failure mode.** A shutdown in the final approach combined with the maximum 12 m/s
-  surface wind: two engines cannot damp a 0.6 m/s lateral oscillation, however long the hold.
+- **Known failure modes.**
+  - A shutdown in the final approach combined with the maximum 12 m/s surface wind: two engines
+    cannot damp a 0.6 m/s lateral oscillation, however long the hold.
+  - Seven or more relight failures. At ignition the booster is moving ~160 m/s toward the tower,
+    and too few engines cannot stop that, so steering back offshore at that point would not work
+    either (tried: it overflew the tower). Abandoning the catch has to be decided before the
+    landing burn, which is not modelled.
 
 Monte Carlo on the Flight 15 profile, with engine failures sampled (40 dispersed cases plus the
 nominal): **40/41 caught, 10 of the 11 cases with an engine failure**.
