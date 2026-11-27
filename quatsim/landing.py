@@ -200,6 +200,18 @@ class LandingConfig:
     hold_margin: float = 8.0              # m, hull bottom held this far above the arms
     resume_accel: float = 1.5             # m/s^2, descent pick-up after a hold
     hold_tgo: float = 12.0                # s, lateral time-to-go allowed while held
+    # Final hold: if the booster is still more than `final_hold_tol` off the catch point
+    # (or sliding sideways faster than `final_hold_vh`) within `final_hold_band` above it,
+    # slow to a hover `final_hold_height` above the catch point until it is lined up and
+    # nearly stopped: within half the tolerance and under the speed limit (hysteresis), at
+    # most `final_hold_max` s (~0.9 t of propellant per second). Losing one of the three
+    # engines late in the approach cuts the attitude authority by a third and the lateral
+    # loop overshot by 3 m with no time left to come back. 0 = off.
+    final_hold_tol: float = 1.0           # m
+    final_hold_vh: float = 0.35           # m/s
+    final_hold_band: float = 20.0         # m
+    final_hold_height: float = 4.0        # m
+    final_hold_max: float = 12.0          # s
 
 
 @dataclass
@@ -277,6 +289,8 @@ class LandingGuidance:
         self.mid_alt = float("nan")
         self.mid_t = float("nan")
         self.hold_time = 0.0               # s spent slowed by the corridor hold
+        self.final_hold_time = 0.0         # s spent in the final hold
+        self._final_holding = False
         self._t_prev = None
         self.roll_start = None
         self._d_hat = np.zeros(2)
@@ -454,6 +468,26 @@ class LandingGuidance:
                     # while held, steer across with the room of a normal approach
                     # (the profile's time-to-go near the arms would close the lean
                     # envelope and crawl the booster across at a few m/s)
+                    t_go_v = max(t_go_v, c.hold_tgo)
+                    held = True
+            if c.final_hold_tol > 0.0 and not held and self.final_hold_time < c.final_hold_max:
+                gap_f = h_left - c.final_hold_height
+                e_now = float(np.linalg.norm(r[:2] - tgt[:2]))
+                vh_now = float(np.linalg.norm(v[:2]))
+                if self._final_holding:       # release only lined up AND nearly stopped
+                    self._final_holding = (e_now > 0.5 * c.final_hold_tol
+                                           or vh_now > c.final_hold_vh)
+                else:
+                    self._final_holding = (e_now > c.final_hold_tol
+                                           or vh_now > 1.5 * c.final_hold_vh)
+                if gap_f < c.final_hold_band and self._final_holding:
+                    v_cap = v_ref * float(np.clip(gap_f / c.final_hold_band, 0.0, 1.0))
+                    if v_cap < v_ref:
+                        v_ref, in_flare = v_cap, False
+                        if self._t_prev is not None:
+                            dt_h = t - self._t_prev
+                            self.final_hold_time += dt_h
+                            self.hold_time += dt_h
                     t_go_v = max(t_go_v, c.hold_tgo)
                     held = True
             # Feed-forward is the profile's own deceleration along the

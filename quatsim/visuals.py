@@ -769,6 +769,13 @@ def engine_layout():
     pos = np.array(inner3 + mid10 + outer20)
     lit = {0: [], 3: [0, 1, 2], 5: [0, 1, 2, 3, 8],       # mid10[0]=0 deg, [5]=180 deg
            13: list(range(13)), 33: list(range(33))}
+    # any other count (engine failures: 11 of 13, 2 of 3, ...): the next larger standard set,
+    # less its last engines, so the plumes still show what is firing
+    base = sorted(lit)
+    for n in range(1, 34):
+        if n not in lit:
+            sup = next(k for k in base if k >= n)
+            lit[n] = lit[sup][:n]
     return pos, lit
 
 

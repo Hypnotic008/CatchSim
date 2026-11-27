@@ -15,6 +15,8 @@ Flags:
     --animate3d       3-D MP4 (figs/catch3d.mp4) + interactive viewer HTML
     --montecarlo N    N dispersed cases + report (figs/monte_carlo.*)
     --no-steer        fly without grid-fin entry steering, for comparison
+    --relight-fail K  K of the 13 landing engines fail to relight
+    --engine-shutdown T  one lit engine shuts down T s after landing ignition
 """
 
 from __future__ import annotations
@@ -210,6 +212,10 @@ def main(argv=None):
                     help="run N dispersed cases and write figs/monte_carlo.png")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--relight-fail", type=int, default=0, metavar="K",
+                    help="K of the 13 landing-burn engines fail to relight")
+    ap.add_argument("--engine-shutdown", type=float, default=-1.0, metavar="T",
+                    help="one lit engine shuts down T s after landing ignition")
     ap.add_argument("--tower", type=int, choices=(1, 2), default=TOWER_NUMBER,
                     help="catch tower: 2 = Tower 2, arms facing SSW (default);\n"
                          "1 = Tower 1, arms facing the ocean")
@@ -240,6 +246,8 @@ def main(argv=None):
     os.makedirs("figs", exist_ok=True)
     t0 = time.time()
     vehicle, aero, sep, bb0, land, seq = build()
+    vehicle.landing_relight_failures = args.relight_fail
+    vehicle.landing_shutdown_t = args.engine_shutdown
     print(vehicle.summary())
     print(mission_report(sep, bb0, land))
     tw = tower()
