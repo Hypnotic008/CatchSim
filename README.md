@@ -32,8 +32,10 @@ python run_mission.py --montecarlo 100     # dispersed campaign (~25 min on 3-4 
 
 ## Robustness result
 
-**101 of 101 cases caught** (100 dispersed + nominal, seed 42): 95% lower
-confidence bound on the catch rate 96.3% (Wilson). The same seed
+**101 of 101 cases caught** (100 dispersed + nominal, seed 42), now including
+landing-burn engine failures: 25 cases lost 1-3 engines at relight and one lost an engine
+in flight, and all 26 were caught. 95% lower confidence bound on the catch rate 96.3%
+(Wilson). The same seed
 caught 81/101 with a first, shorter version of the continuous-deceleration
 final approach (item 11), 97/101 in an earlier guidance iteration, and the original guidance
 caught 1/41 under the same dispersions.
@@ -49,18 +51,18 @@ final approach in the maximum 12 m/s surface wind. See
 
 | criterion | limit | median | 95th pct | worst |
 |---|---|---|---|---|
-| lateral error | 1 m | 0.15 m | 0.47 m | 0.62 m |
-| horizontal speed | 0.5 m/s | 0.02 m/s | 0.18 m/s | 0.22 m/s |
-| vertical speed | 1 m/s | 0.50 m/s | 0.62 m/s | 0.67 m/s |
-| tilt | 0.5° | 0.17 ° | 0.24 ° | 0.25 ° |
-| body rate | 1°/s | 0.04 °/s | 0.10 °/s | 0.32 °/s |
+| lateral error | 1 m | 0.19 m | 0.43 m | 0.51 m |
+| horizontal speed | 0.5 m/s | 0.02 m/s | 0.18 m/s | 0.45 m/s |
+| vertical speed | 1 m/s | 0.48 m/s | 0.66 m/s | 0.77 m/s |
+| tilt | 0.5° | 0.18 ° | 0.24 ° | 0.25 ° |
+| body rate | 1°/s | 0.05 °/s | 0.11 °/s | 0.17 °/s |
 | vertical error | 1 m | 0.01 m | 0.02 m | 0.02 m |
 | fin roll | 10° | 0.00 ° | 0.00 ° | 0.00 ° |
 
-Propellant at catch: 59.2 t minimum, 66.8 t median. The tightest
-margins are lateral error in the strongest jet-stream and surface winds.
-With the roll locked from the coast onward, fin roll and body rate at
-the catch stay small (fin roll ~0°, body rate ≤ 0.32°/s).
+Propellant at catch: 47.6 t minimum, 61.6 t median (59.2 / 66.8 t before engine failures and
+the final hold were added). The final hold acted in 27 cases, for at most 3.7 s. The tightest
+margins are lateral error in the strongest jet-stream and surface winds. With the roll locked
+from the coast onward, fin roll and body rate at the catch stay small.
 
 The catch criteria (all must pass, evaluated when the centre of mass reaches
 the 105 m catch altitude): lateral error ≤ 1 m, vertical error ≤ 1 m,
