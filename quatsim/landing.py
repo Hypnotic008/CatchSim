@@ -531,7 +531,11 @@ class LandingGuidance:
                     tol_on, tol_off = c.final_hold_tol, 0.5 * c.final_hold_tol
                 vh_now = float(np.linalg.norm(v[:2]))
                 rate_now = self._rate_est
-                if self._final_holding:       # release only lined up, stopped AND steady
+                if gap_f >= c.final_hold_band:
+                    # decided only inside the band: higher up, ordinary sideways motion (> 1 m/s)
+                    # latched the hold, which then waited out the stricter release thresholds
+                    self._final_holding = False
+                elif self._final_holding:     # release only lined up, stopped AND steady
                     self._final_holding = (e_now > tol_off
                                            or vh_now > c.final_hold_vh
                                            or rate_now > c.final_hold_rate)

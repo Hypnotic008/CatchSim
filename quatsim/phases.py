@@ -770,6 +770,36 @@ class FlightSequencer:
         lg.n_healthy = self._eng_cap
         return n
 
+    # dynamic pressure over which the grid fins fade out of the landing burn [Pa]
+    landing_fin_q = (3000.0, 8000.0)
+
+    def _landing_fins(self, q, v, r, tau_cmd):
+        """Grid fins during the landing burn. At ignition the booster is still doing ~400 m/s
+        low in the atmosphere, where the fins have as much authority as the gimbals: they take
+        their share of the attitude torque (the gimbals the rest), fading out as the dynamic
+        pressure falls through `landing_fin_q` (roughly 110 -> 70 m/s near the ground), then
+        park at neutral. Flight 15 showed the fins working through about the first third of
+        the landing burn and going quiet once the booster was slow. Returns the fin torque,
+        or None once they are out of it."""
+        if not isinstance(self.fins, AERO.GridFinSet):
+            return None
+        h = float(r[2])
+        v_air = self.gnc_aero.air_velocity(v, h)
+        q_dyn = ENV.dynamic_pressure(v_air, h)
+        lo, hi = self.landing_fin_q
+        share = float(np.clip((q_dyn - lo) / (hi - lo), 0.0, 1.0))
+        if share <= 0.0:
+            self._relax_fins()
+            return None
+        dt = 0.0 if self._fin_t is None else max(self._t_now - self._fin_t, 0.0)
+        self._fin_t = self._t_now
+        mach = float(np.linalg.norm(v_air)) / max(ENV.speed_of_sound(h), 1.0)
+        aoa, roll = AERO.wind_angles(q, v_air)
+        delta, tau_f = self.fins.allocate(share * np.asarray(tau_cmd, float), mach, q_dyn,
+                                          self._fin_delta, dt, aoa, roll)
+        self._fin_delta = delta
+        return np.asarray(tau_f, float)
+
     def _relax_fins(self):
         """Outside the aerodynamic control law (engines lit) the grid fins
         return to neutral at their rate limit."""
@@ -839,8 +869,6 @@ class FlightSequencer:
                                           0, 0.0)
                 return (0.0, ao.torque_applied, 0.0, 0.0, 0.0, r.copy(),
                         q_cmd)
-            if cmd.phase in ("brake", "terminal", "done"):
-                self._relax_fins()
             if cmd.phase == "brake" or cmd.phase == "terminal":
                 self._guid_log.append(dict(cmd.info, t=self._t_now,
                                            phase=cmd.phase,
@@ -853,9 +881,15 @@ class FlightSequencer:
             n_gim = min(seg.n_gimballing, n_lit)
             ao = self.attitude.update(q, w, q_cmd, np.zeros(3), prop,
                                       n_gim, throttle)
-            return (thrust, ao.torque_applied,
+            torque, g_pitch = ao.torque_applied, ao.gimbal_pitch
+            tau_f = self._landing_fins(q, v, r, ao.torque_cmd)
+            if tau_f is not None:
+                # the fins take what they can of the attitude torque, the gimbals the rest
+                applied, g_pitch, *_ = self.attitude.allocate(ao.torque_cmd - tau_f, n_gim, throttle)
+                torque = applied + tau_f
+            return (thrust, torque,
                     veh.mass_flow(n_lit, throttle, vacuum=False),
-                    throttle, ao.gimbal_pitch, r.copy(), q_cmd)
+                    throttle, g_pitch, r.copy(), q_cmd)
 
         if seg.mode == Mode.POSITION:
             r_ref, v_ref, a_ref = divert_profile(
