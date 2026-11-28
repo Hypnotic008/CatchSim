@@ -79,6 +79,7 @@ to be absorbed by feedback -- which is the definition of robust we care about.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -107,6 +108,7 @@ class LandingConfig:
     # law keeps flying with headroom left for the lateral divert. 0 = old 13 -> 3.
     n_mid: int = 5
     mid_frac: float = 0.80
+    lat_size_on_mid: bool = True          # brake lateral field sized on 5-engine authority
     # q-alpha limit: the thrust (and so the body) stays within
     # q_alpha_max / q of the relative wind, so a fast, high-q ignition does not
     # lean the booster 30+ deg into a 100 kPa airstream. With the CFD
@@ -127,16 +129,18 @@ class LandingConfig:
     # fraction of what 13 engines can deliver. <1 leaves throttle headroom
     # for dispersions and for leaning over to divert.
     brake_margin: float = 0.45
-    # Absolute altitude of the handover. 320 m (was 250) gives the 3-engine
-    # phase ~215 m to wipe off 24 m/s at a constant 1.35 m/s^2 (~18 s): a
-    # 12 s version was smooth on the nominal but left too little time to
-    # divert a windy 45 m handover error (81/101 caught).
-    gate_altitude: float = 320.0
+    # Absolute altitude of the 5 -> 3 handover. The 3-engine phase brakes from v_gate at
+    # a_flare down to the settle height, then settles into the arms: 300 m / 26 m/s /
+    # 2.0 m/s^2 is ~12 s of braking and ~3 s of settling. The earlier 320 m / 24 m/s /
+    # 1.35 m/s^2 crawled for ~20 s on three engines and looked like a long hover. Harder
+    # (240 m / 30 m/s / 3.4 m/s^2) left the lateral loop too little time: it arrived at the
+    # arms still 2 m off and held there, the very hover this was meant to remove.
+    gate_altitude: float = 300.0
     # The 13 -> 3 handover happens at a real descent rate, and the 3-engine
     # phase then decelerates CONTINUOUSLY to the catch (v_gate = v_desc and
     # a_flare chosen so the flare spans the whole final approach). The old
     # 8 m/s handover made the booster stop high and creep ~25 s into the arms.
-    v_gate: float = 24.0                  # descent rate at the handover
+    v_gate: float = 26.0                  # descent rate at the handover
     max_tilt_brake: float = np.radians(30.0)
     # Hand over to 3 engines once the brake has slowed below this multiple of
     # v_gate. Waiting for the gate altitude with 13 engines at their floor
@@ -144,9 +148,11 @@ class LandingConfig:
     handover_speed_factor: float = 1.3
 
     # --- terminal --------------------------------------------------------
-    v_desc: float = 24.0                  # cap on the terminal descent rate
-    a_flare: float = 1.35                 # constant terminal deceleration, m/s^2
-    v_touch: float = 0.30                 # descent rate at the catch plane
+    v_desc: float = 26.0                  # cap on the terminal descent rate
+    a_flare: float = 2.0                  # terminal braking down to the settle height, m/s^2
+    settle_height: float = 3.0            # m above the catch plane where the settle starts
+    v_settle: float = 2.0                 # descent rate entering the settle, m/s
+    v_touch: float = 0.50                 # descent rate at the catch plane
     k_v: float = 1.5                      # vertical velocity-error gain, 1/s
     max_tilt_terminal: float = np.radians(12.0)
     # Tilt envelope: allowed lean grows with time-to-go at this rate, so the
@@ -210,7 +216,13 @@ class LandingConfig:
     # to come back. Not fixed by it: the same engine-out with a 12 m/s surface wind, where two
     # engines cannot damp a 0.6 m/s lateral oscillation however long the hold (20 s tried).
     # 0 = off.
-    final_hold_tol: float = 1.0           # m
+    final_hold_tol: float = 1.0           # m (no tower geometry: raw error)
+    # The arms track the booster: position error inside their travel is absorbed (see
+    # tower.compensated_error), so with a tower the hold only acts on error beyond the travel,
+    # less `arm_travel_margin`. Holding on the raw 1 m held 62 of 101 dispersed catches.
+    arm_travel_toward: float = 3.0        # m, toward / away from the tower
+    arm_travel_across: float = 5.0        # m, across the arms
+    arm_travel_margin: float = 1.0        # m
     final_hold_vh: float = 0.35           # m/s
     final_hold_band: float = 20.0         # m
     final_hold_height: float = 4.0        # m
@@ -310,20 +322,27 @@ class LandingGuidance:
     # vertical references
 
     def _terminal_profile(self, h_left: float):
-        """Descent-rate reference, its time derivative factor, and t_go."""
+        """Descent-rate reference v_ref(h), time-to-go, whether it is decelerating, and
+        dv_ref/dh (the feed-forward deceleration is dv_ref/dh * |vz|).
+
+        Constant deceleration a_flare from v_desc down to v_settle at settle_height above the
+        catch plane, then a short settle, linear in height, from v_settle to v_touch: fast
+        and continuous until the booster is in the arms, slow only for the last few metres."""
         c = self.cfg
         h_left = max(h_left, 0.0)
-        h_flare = (c.v_desc ** 2 - c.v_touch ** 2) / (2.0 * c.a_flare)
-        t_flare = (c.v_desc - c.v_touch) / c.a_flare
+        hs = max(c.settle_height, 1e-3)
+        k = (c.v_settle - c.v_touch) / hs                  # settle: v = v_touch + k h
+        t_settle = np.log(c.v_settle / c.v_touch) / k if k > 0 else hs / c.v_touch
+        h_flare = hs + (c.v_desc ** 2 - c.v_settle ** 2) / (2.0 * c.a_flare)
+        t_flare = (c.v_desc - c.v_settle) / c.a_flare
         if h_left > h_flare:
-            v_ref = c.v_desc
-            t_go = (h_left - h_flare) / c.v_desc + t_flare
-            in_flare = False
-        else:
-            v_ref = float(np.sqrt(c.v_touch ** 2 + 2.0 * c.a_flare * h_left))
-            t_go = (v_ref - c.v_touch) / c.a_flare
-            in_flare = True
-        return v_ref, t_go, in_flare
+            return c.v_desc, (h_left - h_flare) / c.v_desc + t_flare + t_settle, False, 0.0
+        if h_left > hs:
+            v_ref = float(np.sqrt(c.v_settle ** 2 + 2.0 * c.a_flare * (h_left - hs)))
+            return v_ref, (v_ref - c.v_settle) / c.a_flare + t_settle, True, c.a_flare / v_ref
+        v_ref = c.v_touch + k * h_left
+        t_go = np.log(v_ref / c.v_touch) / k if k > 0 else h_left / c.v_touch
+        return v_ref, float(t_go), True, k
 
     def _envelope_stop(self, f_z: float, tau: float) -> float:
         """Lateral speed removable in the last ``tau`` s before the settle
@@ -359,7 +378,12 @@ class LandingGuidance:
         vz = float(v[2])
         m = self.vehicle.mass(prop)
         if self._q_prev is not None and self._t_prev is not None and t > self._t_prev:
-            ang = Q.angle_between(self._q_prev, np.asarray(q, float))
+            # rate at which the body axis tips (pitch / yaw), not roll: the booster rolls its
+            # fins into line with the arms during the final approach, and counting that roll
+            # (11-20 deg/s) held every nominal catch for ~6 s
+            xa = Q.rotate(self._q_prev, np.array([1.0, 0.0, 0.0]))
+            xb = Q.rotate(np.asarray(q, float), np.array([1.0, 0.0, 0.0]))
+            ang = float(np.arctan2(np.linalg.norm(np.cross(xa, xb)), float(xa @ xb)))
             self._rate_est += 0.3 * (ang / (t - self._t_prev) - self._rate_est)   # light low-pass
         self._q_prev = np.asarray(q, float).copy()
         # Guidance's ESTIMATE of the aerodynamic force: axial drag plus the
@@ -446,8 +470,14 @@ class LandingGuidance:
             # here?", is bounded everywhere, and hands over nearly overhead
             # and slow regardless of where the burn started.
             f_z_est = a_z + ENV.G0 - float(drag[2]) / m
-            a_d = c.brake_lat_frac * max(f_z_est, ENV.G0) * np.tan(
-                c.max_tilt_brake)
+            # The stopping profile is sized on the lateral authority that will be there to
+            # finish the job: after 13 -> 5, five engines' thrust. Sized on the 13 engines
+            # lit at ignition, it let the booster close on the tower at 70-80 m/s, then the
+            # 5 could not stop it: it overflew the tower by ~85 m and crawled back above the arms.
+            f_lat = max(f_z_est, ENV.G0)
+            if c.lat_size_on_mid and c.n_mid and self.n_lit == c.n_brake:
+                f_lat = min(f_lat, c.mid_frac * self._thrust(c.n_mid) / m)
+            a_d = c.brake_lat_frac * f_lat * np.tan(c.max_tilt_brake)
             e = r[:2] - tgt[:2]
             d = float(np.linalg.norm(e))
             if d > 1e-6:
@@ -466,7 +496,7 @@ class LandingGuidance:
             max_tilt = c.max_tilt_brake
             floor = c.throttle_floor
         else:
-            v_ref, t_go_v, in_flare = self._terminal_profile(h_left)
+            v_ref, t_go_v, in_flare, dvdh = self._terminal_profile(h_left)
             held = False
             if c.corridor_across is not None:
                 gap = h - c.hull_below_com - c.arm_height - c.hold_margin
@@ -487,17 +517,31 @@ class LandingGuidance:
             if (c.final_hold_tol > 0.0 and not held and self.final_hold_time < c.final_hold_max
                     and prop > c.final_hold_reserve):
                 gap_f = h_left - c.final_hold_height
-                e_now = float(np.linalg.norm(r[:2] - tgt[:2]))
+                e_xy = r[:2] - tgt[:2]
+                e_now = float(np.linalg.norm(e_xy))
+                if c.corridor_across is not None:     # error the arms cannot absorb
+                    ax_c = np.asarray(c.corridor_across, float)
+                    ax_c = ax_c / np.linalg.norm(ax_c)
+                    ax_a = np.array([-ax_c[1], ax_c[0]])
+                    res_a = max(abs(float(e_xy @ ax_a)) - (c.arm_travel_toward - c.arm_travel_margin), 0.0)
+                    res_c = max(abs(float(e_xy @ ax_c)) - (c.arm_travel_across - c.arm_travel_margin), 0.0)
+                    e_now = float(np.hypot(res_a, res_c))
+                    tol_on, tol_off = 0.0, 0.0
+                else:
+                    tol_on, tol_off = c.final_hold_tol, 0.5 * c.final_hold_tol
                 vh_now = float(np.linalg.norm(v[:2]))
                 rate_now = self._rate_est
                 if self._final_holding:       # release only lined up, stopped AND steady
-                    self._final_holding = (e_now > 0.5 * c.final_hold_tol
+                    self._final_holding = (e_now > tol_off
                                            or vh_now > c.final_hold_vh
                                            or rate_now > c.final_hold_rate)
-                else:
-                    self._final_holding = (e_now > c.final_hold_tol
-                                           or vh_now > 1.5 * c.final_hold_vh
-                                           or rate_now > 1.5 * c.final_hold_rate)
+                else:                         # engage only where the catch would fail: off by
+                    self._final_holding = (e_now > tol_on                      # more than the
+                                           or vh_now > 1.0                     # arms absorb,
+                                           or rate_now > np.radians(1.0))      # > 1 m/s, > 1 deg/s
+                if os.environ.get("CATCHSIM_DEBUG_HOLD") and gap_f < c.final_hold_band:
+                    print(f"t {t:7.2f} h_left {h_left:6.2f} e {e_now:5.2f} vh {vh_now:5.2f} "
+                          f"rate {np.degrees(rate_now):5.2f} holding {self._final_holding}")
                 if gap_f < c.final_hold_band and self._final_holding:
                     v_cap = v_ref * float(np.clip(gap_f / c.final_hold_band, 0.0, 1.0))
                     if v_cap < v_ref:
@@ -515,8 +559,7 @@ class LandingGuidance:
             # a_flare here held a stopped vehicle 0.1 m above the catch plane
             # (a_z = a_flare - k_v * v_ref > 0 at vz = 0) until the tanks ran
             # dry.
-            a_ff = (c.a_flare * float(np.clip(-vz / max(v_ref, 1e-3), 0.0,
-                                              1.5))
+            a_ff = (dvdh * float(np.clip(-vz, 0.0, 1.5 * v_ref))
                     if in_flare else 0.0)
             a_z = a_ff + c.k_v * ((-v_ref) - vz)
             # After a corridor hold the vehicle is slower than the profile;

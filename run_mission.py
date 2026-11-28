@@ -162,6 +162,7 @@ def landing_config() -> LandingConfig:
     tw = tower()
     return LandingConfig(target=TARGET.copy(), catch_roll_axis=tw.facing,
                          corridor_across=tw.across[:2],
+                         arm_travel_toward=tw.downrange_travel, arm_travel_across=tw.crossrange_travel,
                          arm_height=float(TARGET[2]) + 35.0)
 
 
