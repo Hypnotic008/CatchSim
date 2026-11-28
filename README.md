@@ -42,10 +42,10 @@ caught 1/41 under the same dispersions.
 
 ![Monte Carlo](figs/monte_carlo.png)
 
-**With engine failures, on the Flight 15 profile (CFD aerodynamics): 40 of 41 caught**, 10 of
-the 11 cases that lost engines. That campaign samples landing-burn relight failures and
-in-flight shutdowns on top of all the dispersions above. The one miss loses an engine in the
-final approach in the maximum 12 m/s surface wind. See
+**With engine failures, on the Flight 15 profile (CFD aerodynamics): 39 of 41 caught**, 9 of
+the 11 cases that lost engines (faster final approach, Nov 28). That campaign samples landing-burn relight failures and
+in-flight shutdowns on top of all the dispersions above. The misses lose an engine late: one in the
+final approach in the maximum 12 m/s surface wind, one 26 s into the burn, in the final settle. See
 [Engine failures on the landing burn](#engine-failures-on-the-landing-burn) and
 `figs/monte_carlo_flight15.png`.
 
